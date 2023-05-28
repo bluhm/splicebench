@@ -27,6 +27,17 @@
 #include <string.h>
 #include <unistd.h>
 
+char *listenhost, *bindouthost, *connecthost;
+char *listenport, *bindoutport, *connectport;
+
+void	socket_listen(void);
+void	accepting_cb(int, short, void *);
+void	connected_cb(int, short, void *);
+void	unsplice_cb(int, short, void *);
+int	socket_connect(const char *, const char *, const char *, const char *,
+	    struct addrinfo *);
+int	socket_bind_connect(struct addrinfo *, const char *,
+	    const char *, struct addrinfo *, const char **);
 int	socket_bind(const char *, const char *, struct addrinfo *);
 void	address_parse(const char *, char **, char **);
 
@@ -36,40 +47,36 @@ usage(void)
 	fprintf(stderr, "usage: splicebench splice [listen [bindout]] connect\n"
 	    "port, bind address"
 	    );
-        exit(2);
+	exit(2);
 }
 
 int
 main(int argc, char *argv[])
 {
 	int ch, splicemode;
-	char *listenhost, *bindouthost, *connecthost;
-	char *listenport, *bindoutport, *connectport;
-	int listensock, acceptsock, connectsock;
-        struct addrinfo hints;
 
-        if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
-                err(1, "setvbuf");
+	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
+		err(1, "setvbuf");
 
-        while ((ch = getopt(argc, argv, "")) != -1) {
-                switch (ch) {
-                default:
-                        usage();
-                }
-        }
-        argc -= optind;
-        argv += optind;
+	while ((ch = getopt(argc, argv, "")) != -1) {
+		switch (ch) {
+		default:
+			usage();
+		}
+	}
+	argc -= optind;
+	argv += optind;
 
-        if (argc < 1)
-                errx(1, "copy or splice required");
-        if (strcmp(argv[0], "copy") == 0) {
-                splicemode = 0;
-                setprogname("splicebench copy");
-        } else if (strcmp(argv[0], "splice") == 0) {
-                splicemode = 1;
-                setprogname("splicebench splice");
-        } else
-                errx(1, "bad copy or splice: %s", argv[0]);
+	if (argc < 1)
+		errx(1, "copy or splice required");
+	if (strcmp(argv[0], "copy") == 0) {
+		splicemode = 0;
+		setprogname("splicebench copy");
+	} else if (strcmp(argv[0], "splice") == 0) {
+		splicemode = 1;
+		setprogname("splicebench splice");
+	} else
+		errx(1, "bad copy or splice: %s", argv[0]);
 
 	listenhost = bindouthost = connecthost = NULL;
 	listenport = bindoutport = connectport = NULL;
@@ -87,7 +94,7 @@ main(int argc, char *argv[])
 		address_parse(argv[3], &connecthost, &connectport);
 		break;
 	default:
-                usage();
+		usage();
 	}
 	if (listenport == NULL)
 		listenport = "12345";
@@ -96,19 +103,145 @@ main(int argc, char *argv[])
 
 	event_init();
 
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-        hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST;
+	socket_listen();
 
-	listensock = socket_bind(listenhost, listenport, &hints);
+	event_dispatch();
 
 	return 0;
 }
 
+void
+socket_listen(void)
+{
+	struct addrinfo hints;
+	char host[NI_MAXHOST], serv[NI_MAXSERV];
+	struct sockaddr_storage ss;
+	socklen_t sslen;
+        sslen = sizeof(ss);
+	int lsock, error;
+	struct event *ev;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST | AI_NUMERICSERV;
+
+	lsock = socket_bind(listenhost, listenport, &hints);
+
+        if (getsockname(lsock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getsockname listen");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("listen name: %s %s\n", host, serv);
+
+	if (listen(lsock, 1) < 0)
+		err(1, "listen");
+
+	if ((ev = malloc(sizeof(*ev))) == NULL)
+		err(1, "malloc ev listen");
+
+	event_set(ev, lsock, EV_READ, accepting_cb, NULL);
+	event_add(ev, NULL);
+}
+
+struct ev_splice {
+	struct	event ev;
+	int	sock;
+};
+
+void
+accepting_cb(int lsock, short event, void *arg)
+{
+	struct addrinfo hints;
+	char host[NI_MAXHOST], serv[NI_MAXSERV];
+	struct sockaddr_storage ss;
+	socklen_t sslen;
+	int asock, csock, error;
+	struct ev_splice *evs;
+
+	sslen = sizeof(ss);
+	asock = accept(lsock, (struct sockaddr *)&ss, &sslen);
+	if (asock < 0)
+		err(1, "accept");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("accept peer: %s %s\n", host, serv);
+
+        sslen = sizeof(ss);
+        if (getsockname(asock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getsockname accept");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("accept name: %s %s\n", host, serv);
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+
+	csock = socket_connect(connecthost, connectport,
+	    bindouthost, bindoutport, &hints);
+
+        if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getsockname connect");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("connect name: %s %s\n", host, serv);
+
+        if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getsockname connect");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("connect peer: %s %s\n", host, serv);
+
+	if ((evs = malloc(sizeof(*evs))) == NULL)
+		err(1, "malloc ev connect");
+
+	event_set(&evs->ev, csock, EV_WRITE, connected_cb, evs);
+	evs->sock = asock;
+	event_add(&evs->ev, NULL);
+}
+
+void
+connected_cb(int csock, short event, void *arg)
+{
+	struct ev_splice *evs = arg;
+
+	if (setsockopt(evs->sock, SOL_SOCKET, SO_SPLICE, &csock, sizeof(int))
+	    < 0)
+		err(1, "setsockopt SO_SPLICE");
+
+	event_set(&evs->ev, evs->sock, EV_READ, unsplice_cb, evs);
+	evs->sock = csock;
+	event_add(&evs->ev, NULL);
+}
+
+void
+unsplice_cb(int asock, short event, void *arg)
+{
+	struct ev_splice *evs = arg;
+
+	close(asock);
+	close(evs->sock);
+	free(evs);
+}
+
 int
-socket_bind(const char *host, const char *service, struct addrinfo *hints)
+socket_connect(const char *host, const char *service,
+    const char *bindhost, const char *bindservice,
+    struct addrinfo *hints)
 {
         struct addrinfo *res, *res0;
         int error, sock;
@@ -117,35 +250,132 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 
         error = getaddrinfo(host, service, hints, &res0);
         if (error)
-                errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
-		    (host && service) ? "' '" : "", service ? service : "",
-		    gai_strerror(error));
+                errx(1, "getaddrinfo: %s", gai_strerror(error));
         sock = -1;
         for (res = res0; res; res = res->ai_next) {
-                sock = socket(res->ai_family, res->ai_socktype,
-                    res->ai_protocol);
-                if (sock == -1) {
-                        cause = "socket";
-                        continue;
-                }
-
-                if (bind(sock, res->ai_addr, res->ai_addrlen) == -1) {
-                        cause = "bind";
-                        save_errno = errno;
-                        close(sock);
-                        errno = save_errno;
-                        sock = -1;
-                        continue;
-                }
-
-                break;  /* okay we got one */
+		if (bindhost == NULL && bindservice == NULL) {
+			sock = socket(res->ai_family, res->ai_socktype,
+			    res->ai_protocol);
+			if (sock < 0) {
+				cause = "socket";
+				continue;
+			}
+			if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+				cause = "connect";
+				save_errno = errno;
+				close(sock);
+				errno = save_errno;
+				sock = -1;
+				continue;
+			}
+		} else {
+			sock = socket_bind_connect(res, bindhost, bindservice,
+			    hints, &cause);
+			if (sock < 0)
+				continue;
+		}
+		break;  /* okay we got one */
         }
-        if (sock == -1) {
-                err(1, "%s '%s%s%s'", cause, host ? host : "",
+        if (sock < 0) {
+		err(1, "%s '%s%s%s%s%s%s%s'", cause,
+		    bindhost ? bindhost : "",
+		    (bindhost && bindservice) ? "' '" : "",
+		    bindservice ? bindservice : "",
+		    (bindhost || bindservice) ? "' '" : "",
+		    host ? host : "",
+		    (host && service) ? "' '" : "",
+		    service ? service : "");
+	}
+	hints->ai_family = res->ai_family;
+        freeaddrinfo(res0);
+	return sock;
+}
+
+int
+socket_bind_connect(struct addrinfo *res, const char *host,
+    const char *service, struct addrinfo *hints, const char **cause)
+{
+	struct addrinfo *bindres, *bindres0;
+	int error, sock;
+	int save_errno;
+
+	hints->ai_family = res->ai_family;
+	hints->ai_socktype = res->ai_socktype;
+	hints->ai_protocol = res->ai_protocol;
+	error = getaddrinfo(host, service, hints, &bindres0);
+	if (error) {
+		errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
+		    (host && service) ? "' '" : "", service ? service : "",
+		    gai_strerror(error));
+	}
+	sock = -1;
+	for (bindres = bindres0; bindres; bindres = bindres->ai_next) {
+		sock = socket(bindres->ai_family, bindres->ai_socktype,
+		    bindres->ai_protocol);
+		if (sock < 0) {
+			*cause = "socket";
+			continue;
+		}
+		if (bind(sock, bindres->ai_addr, bindres->ai_addrlen) < 0) {
+			*cause = "bind";
+			save_errno = errno;
+			close(sock);
+			errno = save_errno;
+			sock = -1;
+			continue;
+		}
+		if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+			*cause = "connect";
+			save_errno = errno;
+			close(sock);
+			errno = save_errno;
+			sock = -1;
+			continue;
+		}
+		break;  /* okay we got one */
+	}
+	freeaddrinfo(bindres0);
+	return sock;
+}
+
+int
+socket_bind(const char *host, const char *service, struct addrinfo *hints)
+{
+	struct addrinfo *res, *res0;
+	int error, sock;
+	int save_errno;
+	const char *cause = NULL;
+
+	error = getaddrinfo(host, service, hints, &res0);
+	if (error) {
+		errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
+		    (host && service) ? "' '" : "", service ? service : "",
+		    gai_strerror(error));
+	}
+	sock = -1;
+	for (res = res0; res; res = res->ai_next) {
+		sock = socket(res->ai_family, res->ai_socktype,
+		    res->ai_protocol);
+		if (sock < 0) {
+			cause = "socket";
+			continue;
+		}
+		if (bind(sock, res->ai_addr, res->ai_addrlen) < 0) {
+			cause = "bind";
+			save_errno = errno;
+			close(sock);
+			errno = save_errno;
+			sock = -1;
+			continue;
+		}
+		break;  /* okay we got one */
+	}
+	if (sock < 0) {
+		err(1, "%s '%s%s%s'", cause, host ? host : "",
 		    (host && service) ? "' '" : "", service ? service : "");
 	}
-        freeaddrinfo(res0);
-
+	hints->ai_family = res->ai_family;
+	freeaddrinfo(res0);
 	return sock;
 }
 
@@ -154,18 +384,20 @@ address_parse(const char *address, char **host, char **port)
 {
 	char *str;
 
-        if ((str = strdup(address)) == NULL)
-                err(1, "address '%s'", address);
+	if ((str = strdup(address)) == NULL)
+		err(1, "address '%s'", address);
 
-        *host = str;
-        if (**host == '[') {
-                (*host)++;
-                str = strchr(*host, ']');
-                if (str == NULL)
+	*host = str;
+	if (**host == '[') {
+		*(*host)++ = '\0';
+		str = strchr(*host, ']');
+		if (str == NULL)
 			errx(1, "address '%s': missing ]", address);
-                *str++ = '\0';
-        }
-        *port = strrchr(str, ':');
-        if (*port != NULL)
-                *(*port)++ = '\0';
+		*str++ = '\0';
+	}
+	*port = strrchr(str, ':');
+	if (*port != NULL)
+		*(*port)++ = '\0';
+	if (**host == '\0')
+		*host = NULL;
 }
