@@ -1,4 +1,4 @@
-.\"	$OpenBSD$
+.\" $OpenBSD$
 .\"
 .\" Copyright (c) 2023 Alexander Bluhm <bluhm@genua.de>
 .\"
@@ -20,8 +20,8 @@
 .Dt SPLICEBENCH 1
 .Os
 .Sh NAME
-.Nm splciebench
-.Nd OpenBSD socket splice benchmarking tool
+.Nm splicebench
+.Nd socket splice benchmarking tool
 .Sh SYNOPSIS
 .Nm
 .Bk -words
@@ -34,12 +34,10 @@
 .Sh DESCRIPTION
 The
 .Nm
-utility processes files ...
+utility implements a relay for OpenBSD socket splicing.
+It accepts a TCP connection from a client, connects to a server and
+splices traffic unidirectionally.
 .\" The following requests should be uncommented and used where appropriate.
-.\" .Sh CONTEXT
-.\" For section 9 functions only.
-.\" .Sh RETURN VALUES
-.\" For sections 2, 3, and 9 function return values only.
 .\" .Sh ENVIRONMENT
 .\" For sections 1, 6, 7, and 8 only.
 .\" .Sh FILES
@@ -48,12 +46,13 @@ utility processes files ...
 .\" .Sh EXAMPLES
 .\" .Sh DIAGNOSTICS
 .\" For sections 1, 4, 6, 7, 8, and 9 printf/stderr messages only.
-.\" .Sh ERRORS
-.\" For sections 2, 3, 4, and 9 errno settings only.
-.\" .Sh SEE ALSO
-.\" .Xr foobar 1
-.\" .Sh STANDARDS
-.\" .Sh HISTORY
-.\" .Sh AUTHORS
+.Sh SEE ALSO
+.Xr setsockopt 2 ,
+.Xr sosplice 9
+.Sh AUTHORS
+The
+.Nm
+program was written by
+.An Alexander Bluhm Aq Mt bluhm@genua.de .
 .\" .Sh CAVEATS
 .\" .Sh BUGS
