@@ -27,6 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 
+int family = AF_UNSPEC;
 int splicemode;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
@@ -45,8 +46,10 @@ void	address_parse(const char *, char **, char **);
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench splice [listen [bindout]] connect\n"
-	    "port, bind address"
+	fprintf(stderr, "usage: splicebench [-46] splice "
+	    "[listen [bindout]] connect\n"
+	    "    -4     listen on IPv4\n"
+	    "    -6     listen on IPv6\n"
 	    );
 	exit(2);
 }
@@ -59,8 +62,14 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "")) != -1) {
+	while ((ch = getopt(argc, argv, "46")) != -1) {
 		switch (ch) {
+		case '4':
+			family = AF_INET;
+			break;
+		case '6':
+			family = AF_INET6;
+			break;
 		default:
 			usage();
 		}
@@ -123,7 +132,7 @@ socket_listen(void)
 	struct event *ev;
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = family;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_protocol = IPPROTO_TCP;
 	hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST | AI_NUMERICSERV;
