@@ -27,6 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 
+int splicemode;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 
@@ -53,7 +54,7 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	int ch, splicemode;
+	int ch;
 
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
@@ -129,6 +130,7 @@ socket_listen(void)
 
 	lsock = socket_bind(listenhost, listenport, &hints);
 
+        sslen = sizeof(ss);
         if (getsockname(lsock, (struct sockaddr *)&ss, &sslen) == -1)
                 err(1, "getsockname listen");
 	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
@@ -190,22 +192,6 @@ accepting_cb(int lsock, short event, void *arg)
 	csock = socket_connect(connecthost, connectport,
 	    bindouthost, bindoutport, &hints);
 
-        if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getsockname connect");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("connect name: %s %s\n", host, serv);
-
-        if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getsockname connect");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("connect peer: %s %s\n", host, serv);
-
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
 
@@ -218,12 +204,35 @@ void
 connected_cb(int csock, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
+	int asock = evs->sock;
+	char host[NI_MAXHOST], serv[NI_MAXSERV];
+	struct sockaddr_storage ss;
+	socklen_t sslen;
+	int error;
 
-	if (setsockopt(evs->sock, SOL_SOCKET, SO_SPLICE, &csock, sizeof(int))
-	    < 0)
+        sslen = sizeof(ss);
+        if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getsockname connect");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("connect name: %s %s\n", host, serv);
+
+        sslen = sizeof(ss);
+        if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
+                err(1, "getpeername connect");
+	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("connect peer: %s %s\n", host, serv);
+
+
+	if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &csock, sizeof(int)) < 0)
 		err(1, "setsockopt SO_SPLICE");
 
-	event_set(&evs->ev, evs->sock, EV_READ, unsplice_cb, evs);
+	event_set(&evs->ev, asock, EV_READ, unsplice_cb, evs);
 	evs->sock = csock;
 	event_add(&evs->ev, NULL);
 }
@@ -232,9 +241,20 @@ void
 unsplice_cb(int asock, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
+	int csock = evs->sock;
+	socklen_t len;
+	int error;
+
+	len = sizeof(int);
+	if (getsockopt(asock, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+		err(1, "getsockopt SO_ERROR");
+	if (error) {
+		errno = error;
+		err(1, "splice");
+	}
 
 	close(asock);
-	close(evs->sock);
+	close(csock);
 	free(evs);
 }
 
@@ -354,12 +374,18 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 	}
 	sock = -1;
 	for (res = res0; res; res = res->ai_next) {
+		int optval;
+
 		sock = socket(res->ai_family, res->ai_socktype,
 		    res->ai_protocol);
 		if (sock < 0) {
 			cause = "socket";
 			continue;
 		}
+		optval = 1;
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval,
+		    sizeof(optval)) == -1)
+			err(1, "setsockopt reuseaddr");
 		if (bind(sock, res->ai_addr, res->ai_addrlen) < 0) {
 			cause = "bind";
 			save_errno = errno;
