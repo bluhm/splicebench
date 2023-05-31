@@ -136,7 +136,7 @@ socket_listen(void)
 	char host[NI_MAXHOST], serv[NI_MAXSERV];
 	struct sockaddr_storage ss;
 	socklen_t sslen;
-        sslen = sizeof(ss);
+	sslen = sizeof(ss);
 	int lsock, error;
 	struct event *ev;
 
@@ -148,9 +148,9 @@ socket_listen(void)
 
 	lsock = socket_bind(listenhost, listenport, &hints);
 
-        sslen = sizeof(ss);
-        if (getsockname(lsock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getsockname listen");
+	sslen = sizeof(ss);
+	if (getsockname(lsock, (struct sockaddr *)&ss, &sslen) == -1)
+		err(1, "getsockname listen");
 	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
 	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error)
@@ -187,9 +187,9 @@ accepting_cb(int lsock, short event, void *arg)
 		errx(1, "getnameinfo: %s", gai_strerror(error));
 	printf("accept peer: %s %s\n", host, serv);
 
-        sslen = sizeof(ss);
-        if (getsockname(asock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getsockname accept");
+	sslen = sizeof(ss);
+	if (getsockname(asock, (struct sockaddr *)&ss, &sslen) == -1)
+		err(1, "getsockname accept");
 	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
 	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error)
@@ -223,18 +223,18 @@ connected_cb(int csock, short event, void *arg)
 	socklen_t sslen;
 	int error;
 
-        sslen = sizeof(ss);
-        if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getsockname connect");
+	sslen = sizeof(ss);
+	if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
+		err(1, "getsockname connect");
 	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
 	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error)
 		errx(1, "getnameinfo: %s", gai_strerror(error));
 	printf("connect name: %s %s\n", host, serv);
 
-        sslen = sizeof(ss);
-        if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
-                err(1, "getpeername connect");
+	sslen = sizeof(ss);
+	if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
+		err(1, "getpeername connect");
 	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
 	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error)
@@ -352,16 +352,16 @@ socket_connect(const char *host, const char *service,
     const char *bindhost, const char *bindservice,
     struct addrinfo *hints)
 {
-        struct addrinfo *res, *res0;
-        int error, sock;
-        int save_errno;
-        const char *cause = NULL;
+	struct addrinfo *res, *res0;
+	int error, sock;
+	int save_errno;
+	const char *cause = NULL;
 
-        error = getaddrinfo(host, service, hints, &res0);
-        if (error)
-                errx(1, "getaddrinfo: %s", gai_strerror(error));
-        sock = -1;
-        for (res = res0; res; res = res->ai_next) {
+	error = getaddrinfo(host, service, hints, &res0);
+	if (error)
+		errx(1, "getaddrinfo: %s", gai_strerror(error));
+	sock = -1;
+	for (res = res0; res; res = res->ai_next) {
 		if (bindhost == NULL && bindservice == NULL) {
 			sock = socket(res->ai_family, res->ai_socktype,
 			    res->ai_protocol);
@@ -384,8 +384,8 @@ socket_connect(const char *host, const char *service,
 				continue;
 		}
 		break;  /* okay we got one */
-        }
-        if (sock < 0) {
+	}
+	if (sock < 0) {
 		err(1, "%s '%s%s%s%s%s%s%s'", cause,
 		    bindhost ? bindhost : "",
 		    (bindhost && bindservice) ? "' '" : "",
@@ -396,7 +396,7 @@ socket_connect(const char *host, const char *service,
 		    service ? service : "");
 	}
 	hints->ai_family = res->ai_family;
-        freeaddrinfo(res0);
+	freeaddrinfo(res0);
 	return sock;
 }
 
