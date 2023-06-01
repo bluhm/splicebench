@@ -55,8 +55,8 @@ void	address_parse(const char *, char **, char **);
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46] splice "
-	    "[listen [bindout]] connect\n"
+	fprintf(stderr, "usage: splicebench [-46] copy | splice "
+	    "[listen] [bindout] connect\n"
 	    "    -4     listen on IPv4\n"
 	    "    -6     listen on IPv6\n"
 	    );
