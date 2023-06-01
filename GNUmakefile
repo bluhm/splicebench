@@ -34,60 +34,75 @@ cleanup:
 test-copy-listen-ipv4:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l 127.0.0.1 4712 >out &
-	./splicebench -c -4 127.0.0.1:4712 &
+	./splicebench -c -4 127.0.0.1:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 12345
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-listen-ipv6:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l ::1 4712 >out &
-	./splicebench -c -6 [::1]:4712 &
+	./splicebench -c -6 [::1]:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N ::1 12345
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-port-ipv4:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l 127.0.0.1 4712 >out &
-	./splicebench -c 0.0.0.0:4711 127.0.0.1:4712 &
+	./splicebench -c 0.0.0.0:4711 127.0.0.1:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 4711
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-port-ipv6:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l ::1 4712 >out &
-	./splicebench -c [::]:4711 [::1]:4712 &
+	./splicebench -c [::]:4711 [::1]:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N ::1 4711
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-bind-ipv4:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l 127.0.0.1 4712 >out &
-	./splicebench -c 127.0.0.1:4711 127.0.0.1:0 127.0.0.1:4712 &
+	./splicebench -c 127.0.0.1:4711 127.0.0.1:0 127.0.0.1:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 4711
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-bind-ipv6:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -l ::1 4712 >out &
-	./splicebench -c [::]:4711 [::1]:0 [::1]:4712 &
+	./splicebench -c [::]:4711 [::1]:0 [::1]:4712 | tee log &
+	sleep .1
 	echo $@ | nc.openbsd -N ::1 4711
 	grep $@ out
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-udp-ipv4:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -w5 -u -l 127.0.0.1 4712 >out &
 	./splicebench -c -u 0.0.0.0:4711 127.0.0.1:4712 | tee log &
+	sleep .1
 	{ echo accept; sleep .1; echo $@; } | \
 	    nc.openbsd -w1 -u -N 127.0.0.1 4711
 	sleep .1
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
 
 test-copy-udp-ipv6:
 	@echo -e '\n==== $@ ===='
 	nc.openbsd -w5 -u -l ::1 4712 >out &
 	./splicebench -c -u [::]:4711 [::1]:4712 | tee log &
+	sleep .1
 	{ echo accept; sleep .1; echo $@; } | nc.openbsd -w1 -u -N ::1 4711
 	sleep .1
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
