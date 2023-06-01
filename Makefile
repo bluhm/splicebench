@@ -22,7 +22,7 @@ splicebench-${VERSION}.tar.gz:
 	tar -czvf $@ splicebench-${VERSION}
 	rm -rf splicebench-${VERSION}
 
-CLEANFILES +=	out
+CLEANFILES +=	out log
 
 PHONY: test cleanup
 .for i in ipv4 ipv6
@@ -92,7 +92,7 @@ test-$m-bind-ipv6:
 
 test-$m-udp-ipv4:
 	@echo '\n==== $@ ===='
-	nc -u -l 127.0.0.1 4712 >out &
+	nc -w5 -u -l 127.0.0.1 4712 >out &
 	./splicebench -u $m 127.0.0.1:4711 127.0.0.1:4712 | tee log &
 	{ echo accept; sleep .1; echo $@; } | nc -w1 -u -N 127.0.0.1 4711
 	grep $@ out
@@ -100,7 +100,7 @@ test-$m-udp-ipv4:
 
 test-$m-udp-ipv6:
 	@echo '\n==== $@ ===='
-	nc -u -l ::1 4712 >out &
+	nc -w5 -u -l ::1 4712 >out &
 	./splicebench -u $m [::1]:4711 [::1]:4712 | tee log &
 	{ echo estabish; sleep .1; echo $@; } | nc -w1 -u -N ::1 4711
 	grep $@ out

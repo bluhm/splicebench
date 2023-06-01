@@ -32,10 +32,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#ifdef __linux__
-#define IP_RECVDSTADDR	IP_ORIGDSTADDR
-#endif
-
 int family = AF_UNSPEC;
 int splicemode, timeout = 1, udpmode;
 char *listenhost, *bindouthost, *connecthost;
@@ -266,7 +262,7 @@ receiving_cb(int lsock, short event, void *arg)
 {
 	struct addrinfo hints;
 	char buf[64*1024];
-	struct sockaddr_storage foreign, local;
+	struct sockaddr_storage foreign, local, ss;
 	socklen_t foreignlen, locallen;
 	struct sockaddr_in *sin = NULL;
 	struct sockaddr_in6 *sin6 = NULL;
@@ -300,10 +296,13 @@ receiving_cb(int lsock, short event, void *arg)
 	if (in < 0)
 		err(1, "recvmsg");
 	foreignlen = msg.msg_namelen;
+	local.ss_family = AF_UNSPEC;
+	locallen = sizeof(local);
 
 	if (msg.msg_flags & MSG_CTRUNC)
 		errx(1, "control message truncated");
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+#ifdef __OpenBSD__
 		if (cmsg->cmsg_len == CMSG_LEN(sizeof(struct in_addr)) &&
 		    cmsg->cmsg_level == IPPROTO_IP &&
 		    cmsg->cmsg_type == IP_RECVDSTADDR) {
@@ -311,13 +310,25 @@ receiving_cb(int lsock, short event, void *arg)
 			locallen = sizeof(*sin);
 			memset(sin, 0, sizeof(*sin));
 			sin->sin_family = AF_INET;
-#ifdef __OpenBSD__
 			sin->sin_len = sizeof(*sin);
-#else
-			sin->sin_port = listensockport;
-#endif
 			sin->sin_addr = *(struct in_addr *)CMSG_DATA(cmsg);
 		}
+#endif
+#ifdef __linux__
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(struct in_pktinfo)) &&
+		    cmsg->cmsg_level == IPPROTO_IP &&
+		    cmsg->cmsg_type == IP_PKTINFO) {
+			const struct in_pktinfo *pi;
+
+			pi = (struct in_pktinfo *)CMSG_DATA(cmsg);
+			sin = (struct sockaddr_in *)&local;
+			locallen = sizeof(*sin);
+			memset(sin, 0, sizeof(*sin));
+			sin->sin_family = AF_INET;
+			sin->sin_port = listensockport;
+			sin->sin_addr = pi->ipi_addr;
+		}
+#endif
 #ifdef __OpenBSD__
 		if (cmsg->cmsg_len == CMSG_LEN(sizeof(uint16_t)) &&
 		    cmsg->cmsg_level == IPPROTO_IP &&
@@ -376,6 +387,8 @@ receiving_cb(int lsock, short event, void *arg)
 
 	csock = socket_connect(connecthost, connectport,
 	    bindouthost, bindoutport, &hints);
+	localinfo_print("connect", csock, &ss);
+	foreigninfo_print("connect", csock, &ss);
 
 	out = send(csock, buf, in, 0);
 	if (out < 0)
@@ -426,7 +439,8 @@ nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
 	error = getnameinfo((struct sockaddr *)ss, sslen, host, sizeof(host),
 	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
+		errx(1, "getnameinfo %s %s: %s",
+		    name, side, gai_strerror(error));
 	printf("%s %s: %s %s\n", name, side, host, serv);
 }
 
@@ -701,9 +715,16 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		}
 		if (udpmode && res->ai_family == AF_INET) {
 			optval = 1;
+#ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
 			    &optval, sizeof(optval)) < 0)
 				err(1, "setsockopt IP_RECVDSTADDR");
+#endif
+#ifdef __linux__
+			if (setsockopt(sock, IPPROTO_IP, IP_PKTINFO,
+			    &optval, sizeof(optval)) < 0)
+				err(1, "setsockopt IP_PKTINFO");
+#endif
 #ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
 			    &optval, sizeof(optval)) < 0)
