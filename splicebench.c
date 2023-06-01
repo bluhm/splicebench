@@ -92,8 +92,12 @@ main(int argc, char *argv[])
 		splicemode = 0;
 		setprogname("splicebench copy");
 	} else if (strcmp(argv[0], "splice") == 0) {
+#ifdef __OpenBSD__
 		splicemode = 1;
 		setprogname("splicebench splice");
+#else
+		errx(1, "splice mode only supported on OpenBSD");
+#endif
 	} else
 		errx(1, "bad copy or splice: %s", argv[0]);
 
@@ -241,12 +245,15 @@ connected_cb(int csock, short event, void *arg)
 		errx(1, "getnameinfo: %s", gai_strerror(error));
 	printf("connect peer: %s %s\n", host, serv);
 
+#ifdef __OpenBSD__
 	if (splicemode)
 		socket_splice(evs, asock, csock);
 	else
+#endif
 		process_copy(evs, asock, csock);
 }
 
+#ifdef __OpenBSD__
 void
 socket_splice(struct ev_splice *evs, int from, int to)
 {
@@ -278,6 +285,7 @@ unsplice_cb(int from, short event, void *arg)
 	close(to);
 	free(evs);
 }
+#endif
 
 void
 process_copy(struct ev_splice *evs, int from, int to)
