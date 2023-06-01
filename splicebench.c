@@ -19,6 +19,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <netinet/in.h>
+
 #include <err.h>
 #include <errno.h>
 #include <event.h>
@@ -30,10 +32,15 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef __linux__
+#define IP_RECVDSTADDR	IP_ORIGDSTADDR
+#endif
+
 int family = AF_UNSPEC;
 int splicemode, timeout = 1, udpmode;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
+uint16_t listensockport;
 
 struct ev_splice {
 	struct	event ev;
@@ -176,6 +183,10 @@ socket_listen(void)
 
 	lsock = socket_bind(listenhost, listenport, &hints);
 	localinfo_print("listen", lsock, &local);
+	if (local.ss_family == AF_INET)
+		listensockport = ((struct sockaddr_in *)(&local))->sin_port;
+	if (local.ss_family == AF_INET6)
+		listensockport = ((struct sockaddr_in6 *)(&local))->sin6_port;
 
 	if ((ev = malloc(sizeof(*ev))) == NULL)
 		err(1, "malloc ev listen");
@@ -270,7 +281,6 @@ receiving_cb(int lsock, short event, void *arg)
 	struct cmsghdr *cmsg;
 	struct msghdr msg;
 	struct ev_splice *evs;
-	struct splice sp;
 	ssize_t in, out;
 
 	memset(iov, 0, sizeof(iov));
@@ -300,14 +310,20 @@ receiving_cb(int lsock, short event, void *arg)
 			locallen = sizeof(*sin);
 			memset(sin, 0, sizeof(*sin));
 			sin->sin_family = AF_INET;
+#ifdef __OpenBSD__
 			sin->sin_len = sizeof(*sin);
+#else
+			sin->sin_port = listensockport;
+#endif
 			sin->sin_addr = *(struct in_addr *)CMSG_DATA(cmsg);
 		}
+#ifdef __OpenBSD__
 		if (cmsg->cmsg_len == CMSG_LEN(sizeof(uint16_t)) &&
 		    cmsg->cmsg_level == IPPROTO_IP &&
 		    cmsg->cmsg_type == IP_RECVDSTPORT) {
 			sin->sin_port = *(uint16_t *)CMSG_DATA(cmsg);
 		}
+#endif
 		if (cmsg->cmsg_len == CMSG_LEN(sizeof(struct in6_pktinfo)) &&
 		    cmsg->cmsg_level == IPPROTO_IPV6 &&
 		    cmsg->cmsg_type == IPV6_PKTINFO) {
@@ -318,16 +334,22 @@ receiving_cb(int lsock, short event, void *arg)
 			locallen = sizeof(*sin6);
 			memset(sin6, 0, sizeof(*sin6));
 			sin6->sin6_family = AF_INET6;
+#ifdef __OpenBSD__
 			sin6->sin6_len = sizeof(*sin6);
+#else
+			sin6->sin6_port = listensockport;
+#endif
 			sin6->sin6_addr = pi6->ipi6_addr;
 			if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
 				sin6->sin6_scope_id = pi6->ipi6_ifindex;
 		}
+#ifdef __OpenBSD__
 		if (cmsg->cmsg_len == CMSG_LEN(sizeof(uint16_t)) &&
 		    cmsg->cmsg_level == IPPROTO_IPV6 &&
 		    cmsg->cmsg_type == IPV6_RECVDSTPORT) {
 			sin6->sin6_port = *(uint16_t *)CMSG_DATA(cmsg);
 		}
+#endif
 	}
 
 	nameinfo_print("accept", "peer", &foreign, foreignlen);
@@ -360,19 +382,26 @@ receiving_cb(int lsock, short event, void *arg)
 	if (out != in)
 		errx(1, "partial send %zd of %zd", out, in);
 
-	memset(&sp, 0, sizeof(sp));
-	sp.sp_fd = csock;
-	sp.sp_idle.tv_sec = timeout;
-
-	if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) < 0)
-		err(1, "setsockopt SO_SPLICE");
-
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
+
+#ifdef __OpenBSD__
+	if (splicemode) {
+		struct splice sp;
+
+		memset(&sp, 0, sizeof(sp));
+		sp.sp_fd = csock;
+		sp.sp_idle.tv_sec = timeout;
+
+		if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &sp,
+		    sizeof(sp)) < 0)
+			err(1, "setsockopt SO_SPLICE");
+	}
 
 	event_set(&evs->ev, asock, EV_READ, unsplice_cb, evs);
 	evs->sock = csock;
 	event_add(&evs->ev, NULL);
+#endif
 }
 
 void
@@ -490,7 +519,7 @@ process_copy(struct ev_splice *evs, int from, int to)
 				errx(1, "partial write %zd of %zd", out, in);
 			copylen += out;
 		}
-		printf("copy len %lld\n", copylen);
+		printf("copy len %lld\n", (long long)copylen);
 		if (fflush(stdout) != 0)
 			err(1, "fflush");
 		_exit(0);
@@ -652,18 +681,22 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
 			    &optval, sizeof(optval)) < 0)
 				err(1, "setsockopt IP_RECVDSTADDR");
+#ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
 			    &optval, sizeof(optval)) < 0)
 				err(1, "setsockopt IP_RECVDSTPORT");
+#endif
 		}
 		if (udpmode && res->ai_family == AF_INET6) {
 			optval = 1;
 			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO,
 			    &optval, sizeof(optval)) < 0)
 				err(1, "setsockopt IPV6_RECVDSTPORT");
+#ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVDSTPORT,
 			    &optval, sizeof(optval)) < 0)
 				err(1, "setsockopt IPV6_RECVDSTPORT");
+#endif
 		}
 		optval = 1;
 		if (setsockopt(sock, SOL_SOCKET, res->ai_socktype ==
