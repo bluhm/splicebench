@@ -1,6 +1,9 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-0.02
+1.00 2023-06-02
+  * Convert the splice or copy parameter into a copy switch.
+    This results in an incompatible command line syntax.
+  * Implement UDP splice and copy mode.
 
 0.01 2023-06-01
   * Initial release includes TCP splicing and userland copy mode.
