@@ -33,7 +33,7 @@
 #include <unistd.h>
 
 int family = AF_UNSPEC;
-int splicemode, timeout = 1, udpmode;
+int splicemode = 1, timeout = 1, udpmode = 0;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 uint16_t listensockport;
@@ -66,10 +66,11 @@ void	address_parse(const char *, char **, char **);
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46u] [-t timeout] copy | splice "
+	fprintf(stderr, "usage: splicebench [-46cu] [-t timeout] "
 	    "[listen] [bindout] connect\n"
 	    "    -4		listen on IPv4\n"
 	    "    -6		listen on IPv6\n"
+	    "    -c		copy instead of splice\n"
 	    "    -t timeout	timeout fo UDP splice, default 1 second\n"
 	    "    -u		splice UDP instead of TCP\n"
 	    );
@@ -85,13 +86,16 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46t:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46ct:u")) != -1) {
 		switch (ch) {
 		case '4':
 			family = AF_INET;
 			break;
 		case '6':
 			family = AF_INET6;
+			break;
+		case 'c':
+			splicemode = 0;
 			break;
 		case 't':
 			timeout = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -109,35 +113,24 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc < 1)
-		errx(1, "copy or splice required");
-	if (strcmp(argv[0], "copy") == 0) {
-		splicemode = 0;
-		setprogname("splicebench copy");
-	} else if (strcmp(argv[0], "splice") == 0) {
-#ifdef __OpenBSD__
-		splicemode = 1;
-		setprogname("splicebench splice");
-#else
+#ifndef __OpenBSD__
+	if (splicemode)
 		errx(1, "splice mode only supported on OpenBSD");
 #endif
-	} else
-		errx(1, "bad copy or splice: %s", argv[0]);
-
 	listenhost = bindouthost = connecthost = NULL;
 	listenport = bindoutport = connectport = NULL;
 	switch (argc) {
+	case 1:
+		address_parse(argv[0], &connecthost, &connectport);
+		break;
 	case 2:
+		address_parse(argv[0], &listenhost, &listenport);
 		address_parse(argv[1], &connecthost, &connectport);
 		break;
 	case 3:
-		address_parse(argv[1], &listenhost, &listenport);
+		address_parse(argv[0], &listenhost, &listenport);
+		address_parse(argv[1], &bindouthost, &bindoutport);
 		address_parse(argv[2], &connecthost, &connectport);
-		break;
-	case 4:
-		address_parse(argv[1], &listenhost, &listenport);
-		address_parse(argv[2], &bindouthost, &bindoutport);
-		address_parse(argv[3], &connecthost, &connectport);
 		break;
 	default:
 		usage();
