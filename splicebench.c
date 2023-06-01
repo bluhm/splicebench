@@ -55,7 +55,8 @@ void	foreigninfo_print(const char *, int, struct sockaddr_storage *);
 void	localinfo_print(const char *, int, struct sockaddr_storage *);
 void	nameinfo_print(const char *, const char *, struct sockaddr_storage *,
 	    socklen_t);
-void	socket_splice(struct ev_splice *, int, int);
+void	stream_splice(struct ev_splice *, int, int);
+void	dgram_splice(struct ev_splice *, int, int);
 void	unsplice_cb(int, short, void *);
 void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
@@ -253,7 +254,7 @@ connected_cb(int csock, short event, void *arg)
 
 #ifdef __OpenBSD__
 	if (splicemode)
-		socket_splice(evs, asock, csock);
+		stream_splice(evs, asock, csock);
 	else
 #endif
 		process_copy(evs, asock, csock);
@@ -386,22 +387,11 @@ receiving_cb(int lsock, short event, void *arg)
 		err(1, "malloc ev connect");
 
 #ifdef __OpenBSD__
-	if (splicemode) {
-		struct splice sp;
-
-		memset(&sp, 0, sizeof(sp));
-		sp.sp_fd = csock;
-		sp.sp_idle.tv_sec = timeout;
-
-		if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &sp,
-		    sizeof(sp)) < 0)
-			err(1, "setsockopt SO_SPLICE");
-	}
-
-	event_set(&evs->ev, asock, EV_READ, unsplice_cb, evs);
-	evs->sock = csock;
-	event_add(&evs->ev, NULL);
+	if (splicemode)
+		dgram_splice(evs, asock, csock);
+	else
 #endif
+		process_copy(evs, asock, csock);
 }
 
 void
@@ -442,9 +432,26 @@ nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
 
 #ifdef __OpenBSD__
 void
-socket_splice(struct ev_splice *evs, int from, int to)
+stream_splice(struct ev_splice *evs, int from, int to)
 {
 	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &to, sizeof(int)) < 0)
+		err(1, "setsockopt SO_SPLICE");
+
+	event_set(&evs->ev, from, EV_READ, unsplice_cb, evs);
+	evs->sock = to;
+	event_add(&evs->ev, NULL);
+}
+
+void
+dgram_splice(struct ev_splice *evs, int from, int to)
+{
+	struct splice sp;
+
+	memset(&sp, 0, sizeof(sp));
+	sp.sp_fd = to;
+	sp.sp_idle.tv_sec = timeout;
+
+	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) < 0)
 		err(1, "setsockopt SO_SPLICE");
 
 	event_set(&evs->ev, from, EV_READ, unsplice_cb, evs);
@@ -464,6 +471,8 @@ unsplice_cb(int from, short event, void *arg)
 	len = sizeof(error);
 	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 		err(1, "getsockopt SO_ERROR");
+	if (error == ETIMEDOUT)
+		error = 0;
 	if (error && error != ETIMEDOUT) {
 		errno = error;
 		err(1, "splice");
@@ -485,6 +494,16 @@ process_copy(struct ev_splice *evs, int from, int to)
 	int pfds[2];
 	pid_t child;
 
+	if (udpmode) {
+		struct timeval tv;
+
+		memset(&tv, 0, sizeof(tv));
+		tv.tv_sec = timeout;
+
+		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &tv,
+		    sizeof(tv)) < 0)
+			err(1, "setsockopt SO_RCVTIMEO");
+	}
 	if (pipe(pfds) < 0)
 		err(1, "pipe");
 	if (fflush(stdout) != 0)
@@ -498,21 +517,25 @@ process_copy(struct ev_splice *evs, int from, int to)
 	if (child == 0) {
 		/* child */
 		char *buf;
+		size_t bufsize = 10*1024*1024;
 		off_t copylen = 0;
 
 		if (close(pfds[0]))
 			err(1, "close");
-		if ((buf = malloc(10*1024*1024)) == NULL)
+		if ((buf = malloc(bufsize)) == NULL)
 			err(1, "malloc copy buf");
+
 		for (;;) {
 			ssize_t in, out;
 
-			in = read(from, buf, 10*1024*1024);
+			in = recv(from, buf, bufsize, 0);
+			if (in < 0 && errno == EWOULDBLOCK)
+				in = 0;
 			if (in < 0)
 				err(1, "read");
 			if (in == 0)
 				break;
-			out = write(to, buf, in);
+			out = send(to, buf, in, 0);
 			if (out < 0)
 				err(1, "write");
 			if (out != in)

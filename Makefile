@@ -30,8 +30,8 @@ PHONY: test cleanup
 .for a in listen port bind
 test: test-$m-$a-$i
 .endfor
+test: test-$m-udp-$i
 .endfor
-test: test-splice-udp-$i
 .endfor
 
 test: cleanup
