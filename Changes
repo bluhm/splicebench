@@ -1,4 +1,6 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
+0.02
+
 0.01 2023-06-01
   * Initial release includes TCP splicing and userland copy mode.
