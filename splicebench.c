@@ -22,14 +22,16 @@
 #include <err.h>
 #include <errno.h>
 #include <event.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 
 int family = AF_UNSPEC;
-int splicemode;
+int splicemode, timeout = 1, udpmode;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 
@@ -41,6 +43,11 @@ struct ev_splice {
 void	socket_listen(void);
 void	accepting_cb(int, short, void *);
 void	connected_cb(int, short, void *);
+void	receiving_cb(int, short, void *);
+void	foreigninfo_print(const char *, int, struct sockaddr_storage *);
+void	localinfo_print(const char *, int, struct sockaddr_storage *);
+void	nameinfo_print(const char *, const char *, struct sockaddr_storage *,
+	    socklen_t);
 void	socket_splice(struct ev_splice *, int, int);
 void	unsplice_cb(int, short, void *);
 void	process_copy(struct ev_splice *, int, int);
@@ -55,10 +62,12 @@ void	address_parse(const char *, char **, char **);
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46] copy | splice "
+	fprintf(stderr, "usage: splicebench [-46u] [-t timeout] copy | splice "
 	    "[listen] [bindout] connect\n"
-	    "    -4     listen on IPv4\n"
-	    "    -6     listen on IPv6\n"
+	    "    -4		listen on IPv4\n"
+	    "    -6		listen on IPv6\n"
+	    "    -t timeout	timeout fo UDP splice, default 1 second\n"
+	    "    -u		splice UDP instead of TCP\n"
 	    );
 	exit(2);
 }
@@ -66,18 +75,28 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
+	const char *errstr;
 	int ch;
 
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46")) != -1) {
+	while ((ch = getopt(argc, argv, "46t:u")) != -1) {
 		switch (ch) {
 		case '4':
 			family = AF_INET;
 			break;
 		case '6':
 			family = AF_INET6;
+			break;
+		case 't':
+			timeout = strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr != NULL)
+				errx(1, "timeout is %s: %s",
+				    errstr, optarg);
+			break;
+		case 'u':
+			udpmode = 1;
 			break;
 		default:
 			usage();
@@ -126,6 +145,9 @@ main(int argc, char *argv[])
 
 	event_init();
 
+	if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+		err(1, "signal");
+
 	socket_listen();
 
 	event_dispatch();
@@ -137,72 +159,64 @@ void
 socket_listen(void)
 {
 	struct addrinfo hints;
-	char host[NI_MAXHOST], serv[NI_MAXSERV];
-	struct sockaddr_storage ss;
-	socklen_t sslen;
-	int lsock, error;
+	struct sockaddr_storage local;
+	int lsock;
 	struct event *ev;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = family;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = IPPROTO_TCP;
+	if (udpmode) {
+		hints.ai_socktype = SOCK_DGRAM;
+		hints.ai_protocol = IPPROTO_UDP;
+	} else {
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+	}
 	hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST | AI_NUMERICSERV;
 
 	lsock = socket_bind(listenhost, listenport, &hints);
-
-	sslen = sizeof(ss);
-	if (getsockname(lsock, (struct sockaddr *)&ss, &sslen) == -1)
-		err(1, "getsockname listen");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("listen name: %s %s\n", host, serv);
-
-	if (listen(lsock, 1) < 0)
-		err(1, "listen");
+	localinfo_print("listen", lsock, &local);
 
 	if ((ev = malloc(sizeof(*ev))) == NULL)
 		err(1, "malloc ev listen");
 
-	event_set(ev, lsock, EV_READ, accepting_cb, NULL);
-	event_add(ev, NULL);
+	if (udpmode) {
+		event_set(ev, lsock, EV_READ, receiving_cb, NULL);
+		event_add(ev, NULL);
+	} else {
+		if (listen(lsock, 1) < 0)
+			err(1, "listen");
+
+		event_set(ev, lsock, EV_READ, accepting_cb, NULL);
+		event_add(ev, NULL);
+	}
 }
 
 void
 accepting_cb(int lsock, short event, void *arg)
 {
 	struct addrinfo hints;
-	char host[NI_MAXHOST], serv[NI_MAXSERV];
 	struct sockaddr_storage ss;
 	socklen_t sslen;
-	int asock, csock, error;
+	int asock, csock;
 	struct ev_splice *evs;
 
 	sslen = sizeof(ss);
 	asock = accept(lsock, (struct sockaddr *)&ss, &sslen);
 	if (asock < 0)
 		err(1, "accept");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("accept peer: %s %s\n", host, serv);
-
-	sslen = sizeof(ss);
-	if (getsockname(asock, (struct sockaddr *)&ss, &sslen) == -1)
-		err(1, "getsockname accept");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("accept name: %s %s\n", host, serv);
+	nameinfo_print("accept", "peer", &ss, sslen);
+	localinfo_print("accept", asock, &ss);
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = IPPROTO_TCP;
+	if (udpmode) {
+		hints.ai_socktype = SOCK_DGRAM;
+		hints.ai_protocol = IPPROTO_UDP;
+	} else {
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+	}
 	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
 	csock = socket_connect(connecthost, connectport,
@@ -221,28 +235,10 @@ connected_cb(int csock, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
 	int asock = evs->sock;
-	char host[NI_MAXHOST], serv[NI_MAXSERV];
 	struct sockaddr_storage ss;
-	socklen_t sslen;
-	int error;
 
-	sslen = sizeof(ss);
-	if (getsockname(csock, (struct sockaddr *)&ss, &sslen) == -1)
-		err(1, "getsockname connect");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("connect name: %s %s\n", host, serv);
-
-	sslen = sizeof(ss);
-	if (getpeername(csock, (struct sockaddr *)&ss, &sslen) == -1)
-		err(1, "getpeername connect");
-	error = getnameinfo((struct sockaddr *)&ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
-	if (error)
-		errx(1, "getnameinfo: %s", gai_strerror(error));
-	printf("connect peer: %s %s\n", host, serv);
+	localinfo_print("connect", csock, &ss);
+	foreigninfo_print("connect", csock, &ss);
 
 #ifdef __OpenBSD__
 	if (splicemode)
@@ -250,6 +246,169 @@ connected_cb(int csock, short event, void *arg)
 	else
 #endif
 		process_copy(evs, asock, csock);
+}
+
+
+void
+receiving_cb(int lsock, short event, void *arg)
+{
+	struct addrinfo hints;
+	char buf[64*1024];
+	struct sockaddr_storage foreign, local;
+	socklen_t foreignlen, locallen;
+	struct sockaddr_in *sin = NULL;
+	struct sockaddr_in6 *sin6 = NULL;
+	int asock, csock, optval;
+	struct iovec iov[1];
+	union {
+		struct cmsghdr cmsg;
+		unsigned char buf[
+		    CMSG_SPACE(sizeof(struct in_addr)) +
+		    CMSG_SPACE(sizeof(struct in6_pktinfo)) +
+		    CMSG_SPACE(sizeof(uint16_t))];
+	} cmsgbuf;
+	struct cmsghdr *cmsg;
+	struct msghdr msg;
+	struct ev_splice *evs;
+	struct splice sp;
+	ssize_t in, out;
+
+	memset(iov, 0, sizeof(iov));
+	iov[0].iov_base = buf;
+	iov[0].iov_len = sizeof(buf);
+
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = &foreign;
+	msg.msg_namelen = sizeof(foreign);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = sizeof(iov) / sizeof(iov[0]);
+	msg.msg_control = &cmsgbuf;
+	msg.msg_controllen = sizeof(cmsgbuf);
+
+	in = recvmsg(lsock, &msg, 0);
+	if (in < 0)
+		err(1, "recvmsg");
+	foreignlen = msg.msg_namelen;
+
+	if (msg.msg_flags & MSG_CTRUNC)
+		errx(1, "control message truncated");
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(struct in_addr)) &&
+		    cmsg->cmsg_level == IPPROTO_IP &&
+		    cmsg->cmsg_type == IP_RECVDSTADDR) {
+			sin = (struct sockaddr_in *)&local;
+			locallen = sizeof(*sin);
+			memset(sin, 0, sizeof(*sin));
+			sin->sin_family = AF_INET;
+			sin->sin_len = sizeof(*sin);
+			sin->sin_addr = *(struct in_addr *)CMSG_DATA(cmsg);
+		}
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(uint16_t)) &&
+		    cmsg->cmsg_level == IPPROTO_IP &&
+		    cmsg->cmsg_type == IP_RECVDSTPORT) {
+			sin->sin_port = *(uint16_t *)CMSG_DATA(cmsg);
+		}
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(struct in6_pktinfo)) &&
+		    cmsg->cmsg_level == IPPROTO_IPV6 &&
+		    cmsg->cmsg_type == IPV6_PKTINFO) {
+			const struct in6_pktinfo *pi6;
+
+			pi6 = (struct in6_pktinfo *)CMSG_DATA(cmsg);
+			sin6 = (struct sockaddr_in6 *)&local;
+			locallen = sizeof(*sin6);
+			memset(sin6, 0, sizeof(*sin6));
+			sin6->sin6_family = AF_INET6;
+			sin6->sin6_len = sizeof(*sin6);
+			sin6->sin6_addr = pi6->ipi6_addr;
+			if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
+				sin6->sin6_scope_id = pi6->ipi6_ifindex;
+		}
+		if (cmsg->cmsg_len == CMSG_LEN(sizeof(uint16_t)) &&
+		    cmsg->cmsg_level == IPPROTO_IPV6 &&
+		    cmsg->cmsg_type == IPV6_RECVDSTPORT) {
+			sin6->sin6_port = *(uint16_t *)CMSG_DATA(cmsg);
+		}
+	}
+
+	nameinfo_print("accept", "peer", &foreign, foreignlen);
+	nameinfo_print("accept", "sock", &local, locallen);
+
+	asock = socket(foreign.ss_family, SOCK_DGRAM, IPPROTO_UDP);
+	if (asock < 0)
+		err(1, "socket");
+	optval = 1;
+	if (setsockopt(asock, SOL_SOCKET, SO_REUSEPORT, &optval,
+	    sizeof(optval)) == -1)
+		err(1, "setsockopt reuseport");
+	if (bind(asock, (struct sockaddr *)&local, locallen) < 0)
+		err(1, "bind");
+	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) < 0)
+		err(1, "connect");
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	hints.ai_protocol = IPPROTO_UDP;
+	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+
+	csock = socket_connect(connecthost, connectport,
+	    bindouthost, bindoutport, &hints);
+
+	out = send(csock, buf, in, 0);
+	if (out < 0)
+		err(1, "send");
+	if (out != in)
+		errx(1, "partial send %zd of %zd", out, in);
+
+	memset(&sp, 0, sizeof(sp));
+	sp.sp_fd = csock;
+	sp.sp_idle.tv_sec = timeout;
+
+	if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) < 0)
+		err(1, "setsockopt SO_SPLICE");
+
+	if ((evs = malloc(sizeof(*evs))) == NULL)
+		err(1, "malloc ev connect");
+
+	event_set(&evs->ev, asock, EV_READ, unsplice_cb, evs);
+	evs->sock = csock;
+	event_add(&evs->ev, NULL);
+}
+
+void
+foreigninfo_print(const char *name, int sock, struct sockaddr_storage *ss)
+{
+	socklen_t sslen;
+
+	sslen = sizeof(*ss);
+	if (getpeername(sock, (struct sockaddr *)ss, &sslen) == -1)
+		err(1, "getpeername");
+	nameinfo_print(name, "peer", ss, sslen);
+}
+
+void
+localinfo_print(const char *name, int sock, struct sockaddr_storage *ss)
+{
+	socklen_t sslen;
+
+	sslen = sizeof(*ss);
+	if (getsockname(sock, (struct sockaddr *)ss, &sslen) == -1)
+		err(1, "getsockname");
+	nameinfo_print(name, "sock", ss, sslen);
+}
+
+void
+nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
+    socklen_t sslen)
+{
+	char host[NI_MAXHOST], serv[NI_MAXSERV];
+	int error;
+
+	error = getnameinfo((struct sockaddr *)ss, sslen, host, sizeof(host),
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	if (error)
+		errx(1, "getnameinfo: %s", gai_strerror(error));
+	printf("%s %s: %s %s\n", name, side, host, serv);
 }
 
 #ifdef __OpenBSD__
@@ -269,16 +428,21 @@ unsplice_cb(int from, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
 	int to = evs->sock;
+	off_t splicelen;
 	socklen_t len;
 	int error;
 
-	len = sizeof(int);
+	len = sizeof(error);
 	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 		err(1, "getsockopt SO_ERROR");
-	if (error) {
+	if (error && error != ETIMEDOUT) {
 		errno = error;
 		err(1, "splice");
 	}
+	len = sizeof(splicelen);
+	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) < 0)
+		err(1, "getsockopt SO_SPLICE");
+	printf("splice len %lld\n", splicelen);
 
 	close(from);
 	close(to);
@@ -305,6 +469,7 @@ process_copy(struct ev_splice *evs, int from, int to)
 	if (child == 0) {
 		/* child */
 		char *buf;
+		off_t copylen = 0;
 
 		if (close(pfds[0]))
 			err(1, "close");
@@ -323,7 +488,11 @@ process_copy(struct ev_splice *evs, int from, int to)
 				err(1, "write");
 			if (out != in)
 				errx(1, "partial write %zd of %zd", out, in);
+			copylen += out;
 		}
+		printf("copy len %lld\n", copylen);
+		if (fflush(stdout) != 0)
+			err(1, "fflush");
 		_exit(0);
 	}
 
@@ -345,7 +514,7 @@ waitpid_cb(int pfd, short event, void *arg)
 	pid_t child = evs->sock;
 	int status;
 
-	if (waitpid(child, &status, 0))
+	if (waitpid(child, &status, 0) < 0)
 		err(1, "waitpid");
 	if (status != 0)
 		errx(1, "copy child: %d", status);
@@ -478,8 +647,27 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 			cause = "socket";
 			continue;
 		}
+		if (udpmode && res->ai_family == AF_INET) {
+			optval = 1;
+			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
+			    &optval, sizeof(optval)) < 0)
+				err(1, "setsockopt IP_RECVDSTADDR");
+			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
+			    &optval, sizeof(optval)) < 0)
+				err(1, "setsockopt IP_RECVDSTPORT");
+		}
+		if (udpmode && res->ai_family == AF_INET6) {
+			optval = 1;
+			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO,
+			    &optval, sizeof(optval)) < 0)
+				err(1, "setsockopt IPV6_RECVDSTPORT");
+			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVDSTPORT,
+			    &optval, sizeof(optval)) < 0)
+				err(1, "setsockopt IPV6_RECVDSTPORT");
+		}
 		optval = 1;
-		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval,
+		if (setsockopt(sock, SOL_SOCKET, res->ai_socktype ==
+		    SOCK_DGRAM ?  SO_REUSEPORT : SO_REUSEADDR, &optval,
 		    sizeof(optval)) == -1)
 			err(1, "setsockopt reuseaddr");
 		if (bind(sock, res->ai_addr, res->ai_addrlen) < 0) {

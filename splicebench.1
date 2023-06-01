@@ -23,7 +23,8 @@
 .Sh SYNOPSIS
 .Nm
 .Bk -words
-.Op Fl 46
+.Op Fl 46u
+.Op Fl t Ar timeout
 .Cm copy | splice
 .Op Ar listen
 .Op Ar bindout
@@ -41,11 +42,16 @@ The options are as follows:
 .It Fl 4
 Force
 .Nm
-to use IPv4 addresses only.
+to use IPv4 listen address only.
 .It Fl 6
 Force
 .Nm
-to use IPv6 addresses only.
+to use IPv6 listen addresses only.
+.It Fl t Ar timeout
+When splicing UDP, close the connection after idle timeout.
+Default is 1 second.
+.It Fl u
+Use UDP sockets instead of TCP.
 .El
 .Pp
 One of
