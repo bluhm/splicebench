@@ -5,8 +5,26 @@ WARNINGS=	yes
 BINDIR?=	/usr/local/bin
 MANDIR?=	/usr/local/man/man
 
-PHONY: test
+VERSION=	0.01
+CLEANFILES=	splicebench-${VERSION}.tar.gz
 
+.PHONY: dist splicebench-${VERSION}.tar.gz
+dist: splicebench-${VERSION}.tar.gz
+	@echo ${.OBJDIR}/splicebench-${VERSION}.tar.gz
+
+splicebench-${VERSION}.tar.gz:
+	rm -rf splicebench-${VERSION}
+	mkdir splicebench-${VERSION}
+.for f in README LICENSE Changes Makefile GNUmakefile \
+    splicebench.c splicebench.1
+	cp ${.CURDIR}/$f splicebench-${VERSION}/
+.endfor
+	tar -czvf $@ splicebench-${VERSION}
+	rm -rf splicebench-${VERSION}
+
+CLEANFILES +=	out
+
+PHONY: test
 .for i in ipv4 ipv6
 .for a in listen port bind
 .for m in copy splice
@@ -14,8 +32,6 @@ test: test-$m-$a-$i
 .endfor
 .endfor
 .endfor
-
-CLEANFILES +=	out
 
 .for m in copy splice
 
