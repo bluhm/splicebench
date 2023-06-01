@@ -140,7 +140,6 @@ socket_listen(void)
 	char host[NI_MAXHOST], serv[NI_MAXSERV];
 	struct sockaddr_storage ss;
 	socklen_t sslen;
-	sslen = sizeof(ss);
 	int lsock, error;
 	struct event *ev;
 
