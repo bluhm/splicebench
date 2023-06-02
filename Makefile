@@ -48,7 +48,7 @@ test-$m-listen-ipv4:
 	./splicebench ${m:Mcopy:C/.*/-c/} -4 127.0.0.1:4712 | tee log &
 	echo $@ | nc -N 127.0.0.1 12345
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-listen-ipv6:
 	@echo '\n==== $@ ===='
@@ -56,7 +56,7 @@ test-$m-listen-ipv6:
 	./splicebench ${m:Mcopy:C/.*/-c/} -6 [::1]:4712 | tee log &
 	echo $@ | nc -N ::1 12345
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-port-ipv4:
 	@echo '\n==== $@ ===='
@@ -65,7 +65,7 @@ test-$m-port-ipv4:
 	    tee log &
 	echo $@ | nc -N 127.0.0.1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-port-ipv6:
 	@echo '\n==== $@ ===='
@@ -73,7 +73,7 @@ test-$m-port-ipv6:
 	./splicebench ${m:Mcopy:C/.*/-c/} [::]:4711 [::1]:4712 | tee log &
 	echo $@ | nc -N ::1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-bind-ipv4:
 	@echo '\n==== $@ ===='
@@ -82,7 +82,7 @@ test-$m-bind-ipv4:
 	    127.0.0.1:4712 | tee log &
 	echo $@ | nc -N 127.0.0.1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-bind-ipv6:
 	@echo '\n==== $@ ===='
@@ -91,7 +91,7 @@ test-$m-bind-ipv6:
 	    tee log &
 	echo $@ | nc -N ::1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-udp-ipv4:
 	@echo '\n==== $@ ===='
@@ -100,7 +100,7 @@ test-$m-udp-ipv4:
 	    tee log &
 	{ echo accept; sleep .1; echo $@; } | nc -w1 -u -N 127.0.0.1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-$m-udp-ipv6:
 	@echo '\n==== $@ ===='
@@ -108,7 +108,7 @@ test-$m-udp-ipv6:
 	./splicebench ${m:Mcopy:C/.*/-c/} -u [::1]:4711 [::1]:4712 | tee log &
 	{ echo estabish; sleep .1; echo $@; } | nc -w1 -u -N ::1 4711
 	grep $@ out
-	grep "$m len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "$m: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 .endfor
 

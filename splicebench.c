@@ -40,6 +40,7 @@ uint16_t listensockport;
 
 struct ev_splice {
 	struct	event ev;
+	struct	timeval begin;
 	int	sock;
 };
 
@@ -56,6 +57,8 @@ void	dgram_splice(struct ev_splice *, int, int);
 void	unsplice_cb(int, short, void *);
 void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
+void	print_status(const char *, long long, const struct timeval *,
+	    const struct timeval *);
 int	socket_connect(const char *, const char *, const char *, const char *,
 	    struct addrinfo *);
 int	socket_bind_connect(struct addrinfo *, const char *,
@@ -249,6 +252,8 @@ connected_cb(int csock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
+	if (gettimeofday(&evs->begin, NULL) < 0)
+		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
 	if (splicemode)
 		stream_splice(evs, asock, csock);
@@ -399,7 +404,8 @@ receiving_cb(int lsock, short event, void *arg)
 
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
-
+	if (gettimeofday(&evs->begin, NULL) < 0)
+		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
 	if (splicemode)
 		dgram_splice(evs, asock, csock);
@@ -479,15 +485,25 @@ unsplice_cb(int from, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
 	int to = evs->sock;
+	struct timeval end;
 	off_t splicelen;
 	socklen_t len;
 	int error;
 
+	if (gettimeofday(&end, NULL) < 0)
+		err(1, "gettimeofday end");
 	len = sizeof(error);
 	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 		err(1, "getsockopt SO_ERROR");
-	if (error == ETIMEDOUT)
+	if (error == ETIMEDOUT) {
+		struct timeval idle;
+
 		error = 0;
+		/* last data was seen before idle time */
+		idle.tv_sec = timeout;
+		idle.tv_usec = 0;
+		timersub(&end, &idle, &end);
+	}
 	if (error && error != ETIMEDOUT) {
 		errno = error;
 		err(1, "splice");
@@ -495,7 +511,7 @@ unsplice_cb(int from, short event, void *arg)
 	len = sizeof(splicelen);
 	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) < 0)
 		err(1, "getsockopt SO_SPLICE");
-	printf("splice len %lld\n", splicelen);
+	print_status("splice", splicelen, &evs->begin, &end);
 
 	close(from);
 	close(to);
@@ -506,17 +522,15 @@ unsplice_cb(int from, short event, void *arg)
 void
 process_copy(struct ev_splice *evs, int from, int to)
 {
+	struct timeval idle;
 	int pfds[2];
 	pid_t child;
 
+	timerclear(&idle);
 	if (udpmode) {
-		struct timeval tv;
-
-		memset(&tv, 0, sizeof(tv));
-		tv.tv_sec = timeout;
-
-		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &tv,
-		    sizeof(tv)) < 0)
+		idle.tv_sec = timeout;
+		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &idle,
+		    sizeof(idle)) < 0)
 			err(1, "setsockopt SO_RCVTIMEO");
 	}
 	if (pipe(pfds) < 0)
@@ -531,9 +545,10 @@ process_copy(struct ev_splice *evs, int from, int to)
 
 	if (child == 0) {
 		/* child */
+		struct timeval end;
 		char *buf;
 		size_t bufsize = 10*1024*1024;
-		off_t copylen = 0;
+		long long copylen = 0;
 
 		if (close(pfds[0]))
 			err(1, "close");
@@ -545,10 +560,10 @@ process_copy(struct ev_splice *evs, int from, int to)
 
 			in = recv(from, buf, bufsize, 0);
 			if (in < 0 && errno == EWOULDBLOCK)
-				in = 0;
+				break;
 			if (in < 0)
 				err(1, "read");
-			if (in == 0)
+			if (in == 0 && !udpmode)
 				break;
 			out = send(to, buf, in, 0);
 			if (out < 0)
@@ -557,7 +572,11 @@ process_copy(struct ev_splice *evs, int from, int to)
 				errx(1, "partial write %zd of %zd", out, in);
 			copylen += out;
 		}
-		printf("copy len %lld\n", (long long)copylen);
+
+		if (gettimeofday(&end, NULL) < 0)
+			err(1, "gettimeofday end");
+		timersub(&end, &idle, &end);
+		print_status("copy", copylen, &evs->begin, &end);
 		if (fflush(stdout) != 0)
 			err(1, "fflush");
 		_exit(0);
@@ -588,6 +607,23 @@ waitpid_cb(int pfd, short event, void *arg)
 
 	close(pfd);
 	free(evs);
+}
+
+void
+print_status(const char *action, long long datalen,
+    const struct timeval *begin, const struct timeval *end)
+{
+	struct timeval duration;
+	double bits;
+
+	bits = (double)datalen * 8;
+	timersub(end, begin, &duration);
+	bits /= (double)duration.tv_sec + (double)duration.tv_usec / 1000000;
+	printf("%s: payload %lld, begin %lld.%06ld, end %lld.%06ld, "
+	    "duration %lld.%06ld, bit/s %g\n", action, datalen,
+	    (long long)begin->tv_sec, begin->tv_usec,
+	    (long long)end->tv_sec, end->tv_usec,
+	    (long long)duration.tv_sec, duration.tv_usec, bits);
 }
 
 int
