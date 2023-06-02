@@ -38,7 +38,7 @@ test-copy-listen-ipv4:
 	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 12345
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-listen-ipv6:
 	@echo -e '\n==== $@ ===='
@@ -47,7 +47,7 @@ test-copy-listen-ipv6:
 	sleep .1
 	echo $@ | nc.openbsd -N ::1 12345
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-port-ipv4:
 	@echo -e '\n==== $@ ===='
@@ -56,7 +56,7 @@ test-copy-port-ipv4:
 	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 4711
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-port-ipv6:
 	@echo -e '\n==== $@ ===='
@@ -65,7 +65,7 @@ test-copy-port-ipv6:
 	sleep .1
 	echo $@ | nc.openbsd -N ::1 4711
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-bind-ipv4:
 	@echo -e '\n==== $@ ===='
@@ -74,8 +74,7 @@ test-copy-bind-ipv4:
 	sleep .1
 	echo $@ | nc.openbsd -N 127.0.0.1 4711
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-bind-ipv6:
 	@echo -e '\n==== $@ ===='
@@ -84,7 +83,7 @@ test-copy-bind-ipv6:
 	sleep .1
 	echo $@ | nc.openbsd -N ::1 4711
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-udp-ipv4:
 	@echo -e '\n==== $@ ===='
@@ -95,7 +94,7 @@ test-copy-udp-ipv4:
 	    nc.openbsd -w1 -u -N 127.0.0.1 4711
 	sleep .1
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
 
 test-copy-udp-ipv6:
 	@echo -e '\n==== $@ ===='
@@ -105,4 +104,4 @@ test-copy-udp-ipv6:
 	{ echo accept; sleep .1; echo $@; } | nc.openbsd -w1 -u -N ::1 4711
 	sleep .1
 	grep $@ out
-	grep "copy len `tail -n1 out | wc -c | tr -d ' '`\$$" log
+	grep "copy: payload `tail -n1 out | wc -c | tr -d ' '`," log
