@@ -113,7 +113,15 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-#ifndef __OpenBSD__
+#ifdef __OpenBSD__
+	if (splicemode) {
+		if (pledge("stdio dns inet", NULL) == -1)
+			err(1, "pledge");
+	} else {
+		if (pledge("stdio dns inet proc", NULL) == -1)
+			err(1, "pledge");
+	}
+#else
 	if (splicemode)
 		errx(1, "splice mode only supported on OpenBSD");
 #endif
