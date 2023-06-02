@@ -49,7 +49,8 @@ to use IPv6 listen addresses only.
 .It Fl c
 Copy mode can be selected to compare performance to splice.
 .It Fl t Ar timeout
-When splicing UDP, close the connection after idle timeout.
+Waiting for connection and splicing are stopped after timeout.
+Disable timeout with 0 and run forever.
 Default is 1 second.
 .It Fl u
 Use UDP sockets instead of TCP.
