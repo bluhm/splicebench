@@ -39,6 +39,17 @@ test: cleanup
 cleanup:
 	@echo '\n==== cleanup ===='
 	-pkill splicebench
+	-pkill -f "nc -N 127.0.0.1 12345"
+	-pkill -f "nc -N 127.0.0.1 4711"
+	-pkill -f "nc -N ::1 12345"
+	-pkill -f "nc -N ::1 4711"
+	-pkill -f "nc -l 127.0.0.1 4712"
+	-pkill -f "nc -l 127.0.0.1 4712"
+	-pkill -f "nc -l ::1 4712"
+	-pkill -f "nc -w1 -u -N 127.0.0.1 4711"
+	-pkill -f "nc -w1 -u -N ::1 4711"
+	-pkill -f "nc -w5 -u -l 127.0.0.1 4712"
+	-pkill -f "nc -w5 -u -l ::1 4712"
 
 .for m in copy splice
 
