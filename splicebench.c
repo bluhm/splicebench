@@ -71,11 +71,11 @@ usage(void)
 {
 	fprintf(stderr, "usage: splicebench [-46cu] [-t timeout] "
 	    "[listen] [bindout] connect\n"
-	    "    -4		listen on IPv4\n"
-	    "    -6		listen on IPv6\n"
-	    "    -c		copy instead of splice\n"
-	    "    -t timeout	timeout fo UDP splice, default 1 second\n"
-	    "    -u		splice UDP instead of TCP\n"
+	    "    -4             listen on IPv4\n"
+	    "    -6             listen on IPv6\n"
+	    "    -c             copy instead of splice\n"
+	    "    -t timeout     timeout for UDP splice, default 1 second\n"
+	    "    -u             splice UDP instead of TCP\n"
 	    );
 	exit(2);
 }
