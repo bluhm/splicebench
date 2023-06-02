@@ -24,6 +24,7 @@
 #include <err.h>
 #include <errno.h>
 #include <event.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -33,10 +34,13 @@
 #include <unistd.h>
 
 int family = AF_UNSPEC;
-int splicemode = 1, timeout = 1, udpmode = 0;
+int splicemode = 1, udpmode = 0;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 uint16_t listensockport;
+struct timeval stop;
+int has_timedout;
+const int timeout_idle = 1;
 
 struct ev_splice {
 	struct	event ev;
@@ -65,6 +69,8 @@ int	socket_bind_connect(struct addrinfo *, const char *,
 	    const char *, struct addrinfo *, const char **);
 int	socket_bind(const char *, const char *, struct addrinfo *);
 void	address_parse(const char *, char **, char **);
+void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
+	    void *);
 
 static void
 usage(void)
@@ -74,7 +80,7 @@ usage(void)
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -c             copy instead of splice\n"
-	    "    -t timeout     timeout for UDP splice, default 1 second\n"
+	    "    -t timeout     global timeout, default 1 second\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
 	exit(2);
@@ -84,7 +90,7 @@ int
 main(int argc, char *argv[])
 {
 	const char *errstr;
-	int ch;
+	int ch, timeout = 1;
 
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
@@ -151,6 +157,12 @@ main(int argc, char *argv[])
 	if (connectport == NULL)
 		connectport = "12345";
 
+	if (timeout) {
+		if (gettimeofday(&stop, NULL) < 0)
+			err(1, "gettimeofday stop");
+		stop.tv_sec += timeout;
+	}
+
 	event_init();
 
 	if (signal(SIGPIPE, SIG_IGN) == SIG_ERR)
@@ -159,6 +171,9 @@ main(int argc, char *argv[])
 	socket_listen();
 
 	event_dispatch();
+
+	if (has_timedout)
+		errx(1, "stopped by timeout");
 
 	return 0;
 }
@@ -193,25 +208,31 @@ socket_listen(void)
 		err(1, "malloc ev listen");
 
 	if (udpmode) {
-		event_set(ev, lsock, EV_READ, receiving_cb, NULL);
-		event_add(ev, NULL);
+		timeout_event(ev, lsock, EV_READ, receiving_cb, ev);
 	} else {
 		if (listen(lsock, 1) < 0)
 			err(1, "listen");
 
-		event_set(ev, lsock, EV_READ, accepting_cb, NULL);
-		event_add(ev, NULL);
+		timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
 	}
 }
 
 void
 accepting_cb(int lsock, short event, void *arg)
 {
+	struct event *ev = arg;
 	struct addrinfo hints;
 	struct sockaddr_storage ss;
 	socklen_t sslen;
 	int asock, csock;
 	struct ev_splice *evs;
+
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		close(lsock);
+		free(ev);
+		return;
+	}
 
 	sslen = sizeof(ss);
 	asock = accept(lsock, (struct sockaddr *)&ss, &sslen);
@@ -236,9 +257,10 @@ accepting_cb(int lsock, short event, void *arg)
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
 
-	event_set(&evs->ev, csock, EV_WRITE, connected_cb, evs);
 	evs->sock = asock;
-	event_add(&evs->ev, NULL);
+	timeout_event(&evs->ev, csock, EV_WRITE, connected_cb, evs);
+	close(lsock);
+	free(ev);
 }
 
 void
@@ -248,9 +270,19 @@ connected_cb(int csock, short event, void *arg)
 	int asock = evs->sock;
 	struct sockaddr_storage ss;
 
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		close(asock);
+		close(csock);
+		free(evs);
+		return;
+	}
+
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
+	if (fcntl(csock, F_SETFL, 0) < 0)
+		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	if (gettimeofday(&evs->begin, NULL) < 0)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
@@ -265,6 +297,7 @@ connected_cb(int csock, short event, void *arg)
 void
 receiving_cb(int lsock, short event, void *arg)
 {
+	struct event *ev = arg;
 	struct addrinfo hints;
 	char buf[64*1024];
 	struct sockaddr_storage foreign, local, ss;
@@ -284,6 +317,13 @@ receiving_cb(int lsock, short event, void *arg)
 	struct msghdr msg;
 	struct ev_splice *evs;
 	ssize_t in, out;
+
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		close(lsock);
+		free(ev);
+		return;
+	}
 
 	memset(iov, 0, sizeof(iov));
 	iov[0].iov_base = buf;
@@ -394,6 +434,8 @@ receiving_cb(int lsock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
+	if (fcntl(csock, F_SETFL, 0) < 0)
+		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	out = send(csock, buf, in, 0);
 	if (out < 0)
 		err(1, "send");
@@ -410,6 +452,9 @@ receiving_cb(int lsock, short event, void *arg)
 	else
 #endif
 		process_copy(evs, asock, csock);
+
+	close(lsock);
+	free(ev);
 }
 
 void
@@ -430,7 +475,7 @@ localinfo_print(const char *name, int sock, struct sockaddr_storage *ss)
 
 	sslen = sizeof(*ss);
 	if (getsockname(sock, (struct sockaddr *)ss, &sslen) == -1)
-		err(1, "getsockname");
+		err(1, "getsockname %s", name);
 	nameinfo_print(name, "sock", ss, sslen);
 }
 
@@ -457,9 +502,8 @@ stream_splice(struct ev_splice *evs, int from, int to)
 	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &to, sizeof(int)) < 0)
 		err(1, "setsockopt SO_SPLICE");
 
-	event_set(&evs->ev, from, EV_READ, unsplice_cb, evs);
 	evs->sock = to;
-	event_add(&evs->ev, NULL);
+	timeout_event(&evs->ev, from, EV_READ, unsplice_cb, evs);
 }
 
 void
@@ -469,14 +513,13 @@ dgram_splice(struct ev_splice *evs, int from, int to)
 
 	memset(&sp, 0, sizeof(sp));
 	sp.sp_fd = to;
-	sp.sp_idle.tv_sec = timeout;
+	sp.sp_idle.tv_sec = timeout_idle;
 
 	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) < 0)
 		err(1, "setsockopt SO_SPLICE");
 
-	event_set(&evs->ev, from, EV_READ, unsplice_cb, evs);
 	evs->sock = to;
-	event_add(&evs->ev, NULL);
+	timeout_event(&evs->ev, from, EV_READ, unsplice_cb, evs);
 }
 
 void
@@ -489,6 +532,11 @@ unsplice_cb(int from, short event, void *arg)
 	socklen_t len;
 	int error;
 
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		/* fall through to print status line */
+	}
+
 	if (gettimeofday(&end, NULL) < 0)
 		err(1, "gettimeofday end");
 	len = sizeof(error);
@@ -499,7 +547,7 @@ unsplice_cb(int from, short event, void *arg)
 
 		error = 0;
 		/* last data was seen before idle time */
-		idle.tv_sec = timeout;
+		idle.tv_sec = timeout_idle;
 		idle.tv_usec = 0;
 		timersub(&end, &idle, &end);
 	}
@@ -527,7 +575,7 @@ process_copy(struct ev_splice *evs, int from, int to)
 
 	timerclear(&idle);
 	if (udpmode) {
-		idle.tv_sec = timeout;
+		idle.tv_sec = timeout_idle;
 		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &idle,
 		    sizeof(idle)) < 0)
 			err(1, "setsockopt SO_RCVTIMEO");
@@ -587,9 +635,8 @@ process_copy(struct ev_splice *evs, int from, int to)
 	close(from);
 	close(to);
 
-	event_set(&evs->ev, pfds[0], EV_READ, waitpid_cb, evs);
 	evs->sock = child;
-	event_add(&evs->ev, NULL);
+	timeout_event(&evs->ev, pfds[0], EV_READ, waitpid_cb, evs);
 }
 
 void
@@ -598,6 +645,12 @@ waitpid_cb(int pfd, short event, void *arg)
 	struct ev_splice *evs = arg;
 	pid_t child = evs->sock;
 	int status;
+
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		kill(SIGTERM, child);
+		/* fall through to collect child */
+	}
 
 	if (waitpid(child, &status, 0) < 0)
 		err(1, "waitpid");
@@ -641,13 +694,14 @@ socket_connect(const char *host, const char *service,
 	sock = -1;
 	for (res = res0; res; res = res->ai_next) {
 		if (bindhost == NULL && bindservice == NULL) {
-			sock = socket(res->ai_family, res->ai_socktype,
-			    res->ai_protocol);
+			sock = socket(res->ai_family, res->ai_socktype |
+			    SOCK_NONBLOCK, res->ai_protocol);
 			if (sock < 0) {
 				cause = "socket";
 				continue;
 			}
-			if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+			if (connect(sock, res->ai_addr, res->ai_addrlen) < 0 &&
+			    errno != EINPROGRESS) {
 				cause = "connect";
 				save_errno = errno;
 				close(sock);
@@ -699,8 +753,8 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 	}
 	sock = -1;
 	for (bindres = bindres0; bindres; bindres = bindres->ai_next) {
-		sock = socket(bindres->ai_family, bindres->ai_socktype,
-		    bindres->ai_protocol);
+		sock = socket(bindres->ai_family, bindres->ai_socktype |
+		    SOCK_NONBLOCK, bindres->ai_protocol);
 		if (sock < 0) {
 			*cause = "socket";
 			continue;
@@ -713,7 +767,8 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 			sock = -1;
 			continue;
 		}
-		if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+		if (connect(sock, res->ai_addr, res->ai_addrlen) < 0 &&
+		    errno != EINPROGRESS) {
 			*cause = "connect";
 			save_errno = errno;
 			close(sock);
@@ -825,4 +880,26 @@ address_parse(const char *address, char **host, char **port)
 		*(*port)++ = '\0';
 	if (**host == '\0')
 		*host = NULL;
+}
+
+void
+timeout_event(struct event *ev, int fd, short events,
+    void (*callback)(int, short, void *), void *arg)
+{
+	struct timeval timeo;
+
+	if (!timerisset(&stop)) {
+		event_set(ev, fd, events, callback, arg);
+		event_add(ev, NULL);
+		return;
+	}
+	if (gettimeofday(&timeo, NULL) < 0)
+		err(1, "gettimeofday timeo");
+	if (timercmp(&stop, &timeo, <=)) {
+		callback(fd, EV_TIMEOUT, arg);
+		return;
+	}
+	timersub(&stop, &timeo, &timeo);
+	event_set(ev, fd, events, callback, arg);
+	event_add(ev, &timeo);
 }
