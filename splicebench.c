@@ -665,13 +665,13 @@ socket_connect(const char *host, const char *service,
 		break;  /* okay we got one */
 	}
 	if (sock < 0) {
-		err(1, "%s '%s%s%s%s%s%s%s'", cause,
+		err(1, "%s %s%s%s%s%s%s%s", cause,
 		    bindhost ? bindhost : "",
-		    (bindhost && bindservice) ? "' '" : "",
+		    (bindhost && bindservice) ? " " : "",
 		    bindservice ? bindservice : "",
-		    (bindhost || bindservice) ? "' '" : "",
+		    (bindhost || bindservice) ? " " : "",
 		    host ? host : "",
-		    (host && service) ? "' '" : "",
+		    (host && service) ? " " : "",
 		    service ? service : "");
 	}
 	hints->ai_family = res->ai_family;
@@ -692,8 +692,8 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 	hints->ai_protocol = res->ai_protocol;
 	error = getaddrinfo(host, service, hints, &bindres0);
 	if (error) {
-		errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
-		    (host && service) ? "' '" : "", service ? service : "",
+		errx(1, "getaddrinfo %s%s%s: %s", host ? host : "",
+		    (host && service) ? " " : "", service ? service : "",
 		    gai_strerror(error));
 	}
 	sock = -1;
@@ -736,8 +736,8 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 
 	error = getaddrinfo(host, service, hints, &res0);
 	if (error) {
-		errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
-		    (host && service) ? "' '" : "", service ? service : "",
+		errx(1, "getaddrinfo %s%s%s: %s", host ? host : "",
+		    (host && service) ? " " : "", service ? service : "",
 		    gai_strerror(error));
 	}
 	sock = -1;
@@ -795,8 +795,8 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		break;  /* okay we got one */
 	}
 	if (sock < 0) {
-		err(1, "%s '%s%s%s'", cause, host ? host : "",
-		    (host && service) ? "' '" : "", service ? service : "");
+		err(1, "%s %s%s%s", cause, host ? host : "",
+		    (host && service) ? " " : "", service ? service : "");
 	}
 	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
@@ -809,14 +809,14 @@ address_parse(const char *address, char **host, char **port)
 	char *str;
 
 	if ((str = strdup(address)) == NULL)
-		err(1, "address '%s'", address);
+		err(1, "address %s", address);
 
 	*host = str;
 	if (**host == '[') {
 		*(*host)++ = '\0';
 		str = strchr(*host, ']');
 		if (str == NULL)
-			errx(1, "address '%s': missing ]", address);
+			errx(1, "address %s: missing ]", address);
 		*str++ = '\0';
 	}
 	*port = strrchr(str, ':');
