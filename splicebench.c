@@ -446,7 +446,7 @@ nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
 	if (error)
 		errx(1, "getnameinfo %s %s: %s",
 		    name, side, gai_strerror(error));
-	printf("%s %s: %s %s\n", name, side, host, serv);
+	printf("%s %sname: %s %s\n", name, side, host, serv);
 }
 
 #ifdef __OpenBSD__
