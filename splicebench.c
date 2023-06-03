@@ -180,7 +180,7 @@ socket_listen(void)
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_protocol = IPPROTO_TCP;
 	}
-	hints.ai_flags = AI_PASSIVE | AI_NUMERICHOST | AI_NUMERICSERV;
+	hints.ai_flags = AI_PASSIVE;
 
 	lsock = socket_bind(listenhost, listenport, &hints);
 	localinfo_print("listen", lsock, &local);
@@ -229,7 +229,6 @@ accepting_cb(int lsock, short event, void *arg)
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_protocol = IPPROTO_TCP;
 	}
-	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
 	csock = socket_connect(connecthost, connectport,
 	    bindouthost, bindoutport, &hints);
@@ -389,7 +388,6 @@ receiving_cb(int lsock, short event, void *arg)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
-	hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
 
 	csock = socket_connect(connecthost, connectport,
 	    bindouthost, bindoutport, &hints);
@@ -690,6 +688,8 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 	hints->ai_family = res->ai_family;
 	hints->ai_socktype = res->ai_socktype;
 	hints->ai_protocol = res->ai_protocol;
+	hints->ai_flags = AI_PASSIVE;
+
 	error = getaddrinfo(host, service, hints, &bindres0);
 	if (error) {
 		errx(1, "getaddrinfo '%s%s%s': %s", host ? host : "",
