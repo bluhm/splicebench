@@ -442,7 +442,8 @@ nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
 	int error;
 
 	error = getnameinfo((struct sockaddr *)ss, sslen, host, sizeof(host),
-	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+	    serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV |
+	    (udpmode ? NI_DGRAM : 0));
 	if (error)
 		errx(1, "getnameinfo %s %s: %s",
 		    name, side, gai_strerror(error));
