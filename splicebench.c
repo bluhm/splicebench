@@ -124,10 +124,10 @@ main(int argc, char *argv[])
 
 #ifdef __OpenBSD__
 	if (splicemode) {
-		if (pledge("stdio dns inet", NULL) == -1)
+		if (pledge("stdio dns inet", NULL) < 0)
 			err(1, "pledge");
 	} else {
-		if (pledge("stdio dns inet proc", NULL) == -1)
+		if (pledge("stdio dns inet proc", NULL) < 0)
 			err(1, "pledge");
 	}
 #else
@@ -417,7 +417,7 @@ receiving_cb(int lsock, short event, void *arg)
 		err(1, "socket");
 	optval = 1;
 	if (setsockopt(asock, SOL_SOCKET, SO_REUSEPORT, &optval,
-	    sizeof(optval)) == -1)
+	    sizeof(optval)) < 0)
 		err(1, "setsockopt reuseport");
 	if (bind(asock, (struct sockaddr *)&local, locallen) < 0)
 		err(1, "bind");
@@ -463,7 +463,7 @@ foreigninfo_print(const char *name, int sock, struct sockaddr_storage *ss)
 	socklen_t sslen;
 
 	sslen = sizeof(*ss);
-	if (getpeername(sock, (struct sockaddr *)ss, &sslen) == -1)
+	if (getpeername(sock, (struct sockaddr *)ss, &sslen) < 0)
 		err(1, "getpeername");
 	nameinfo_print(name, "peer", ss, sslen);
 }
@@ -474,7 +474,7 @@ localinfo_print(const char *name, int sock, struct sockaddr_storage *ss)
 	socklen_t sslen;
 
 	sslen = sizeof(*ss);
-	if (getsockname(sock, (struct sockaddr *)ss, &sslen) == -1)
+	if (getsockname(sock, (struct sockaddr *)ss, &sslen) < 0)
 		err(1, "getsockname %s", name);
 	nameinfo_print(name, "sock", ss, sslen);
 }
@@ -838,7 +838,7 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		optval = 1;
 		if (setsockopt(sock, SOL_SOCKET, res->ai_socktype ==
 		    SOCK_DGRAM ?  SO_REUSEPORT : SO_REUSEADDR, &optval,
-		    sizeof(optval)) == -1)
+		    sizeof(optval)) < 0)
 			err(1, "setsockopt reuseaddr");
 		if (bind(sock, res->ai_addr, res->ai_addrlen) < 0) {
 			cause = "bind";
