@@ -22,9 +22,9 @@ splicebench-${VERSION}.tar.gz:
 	tar -czvf $@ splicebench-${VERSION}
 	rm -rf splicebench-${VERSION}
 
-CLEANFILES +=	out log
+CLEANFILES+=	out log
 
-PHONY: test cleanup
+PHONY: test
 .for i in ipv4 ipv6
 .for m in copy splice
 .for a in listen port bind
@@ -33,12 +33,6 @@ test: test-$m-$a-$i
 test: test-$m-udp-$i
 .endfor
 .endfor
-
-test: cleanup
-
-cleanup:
-	@echo '\n==== cleanup ===='
-	-pkill splicebench
 
 .for m in copy splice
 

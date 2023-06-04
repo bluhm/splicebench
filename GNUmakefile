@@ -24,12 +24,7 @@ test: \
 	test-copy-listen-ipv4 test-copy-listen-ipv6 \
 	test-copy-port-ipv4 test-copy-port-ipv6 \
 	test-copy-bind-ipv4 test-copy-bind-ipv6 \
-	test-copy-udp-ipv4 test-copy-udp-ipv6 \
-	cleanup
-
-cleanup:
-	@echo -e '\n==== cleanup ===='
-	-pkill splicebench
+	test-copy-udp-ipv4 test-copy-udp-ipv6
 
 test-copy-listen-ipv4:
 	@echo -e '\n==== $@ ===='
