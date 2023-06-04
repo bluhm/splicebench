@@ -158,7 +158,7 @@ main(int argc, char *argv[])
 		connectport = "12345";
 
 	if (timeout) {
-		if (gettimeofday(&stop, NULL) < 0)
+		if (gettimeofday(&stop, NULL) == -1)
 			err(1, "gettimeofday stop");
 		stop.tv_sec += timeout;
 	}
@@ -210,7 +210,7 @@ socket_listen(void)
 	if (udpmode) {
 		timeout_event(ev, lsock, EV_READ, receiving_cb, ev);
 	} else {
-		if (listen(lsock, 1) < 0)
+		if (listen(lsock, 1) == -1)
 			err(1, "listen");
 
 		timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
@@ -236,7 +236,7 @@ accepting_cb(int lsock, short event, void *arg)
 
 	sslen = sizeof(ss);
 	asock = accept(lsock, (struct sockaddr *)&ss, &sslen);
-	if (asock < 0)
+	if (asock == -1)
 		err(1, "accept");
 	nameinfo_print("accept", "peer", &ss, sslen);
 	localinfo_print("accept", asock, &ss);
@@ -281,9 +281,9 @@ connected_cb(int csock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
-	if (fcntl(csock, F_SETFL, 0) < 0)
+	if (fcntl(csock, F_SETFL, 0) == -1)
 		err(1, "fcntl F_SETFL clear O_NONBLOCK");
-	if (gettimeofday(&evs->begin, NULL) < 0)
+	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
 	if (splicemode)
@@ -338,7 +338,7 @@ receiving_cb(int lsock, short event, void *arg)
 	msg.msg_controllen = sizeof(cmsgbuf);
 
 	in = recvmsg(lsock, &msg, 0);
-	if (in < 0)
+	if (in == -1)
 		err(1, "recvmsg");
 	foreignlen = msg.msg_namelen;
 	local.ss_family = AF_UNSPEC;
@@ -413,15 +413,15 @@ receiving_cb(int lsock, short event, void *arg)
 	nameinfo_print("accept", "sock", &local, locallen);
 
 	asock = socket(foreign.ss_family, SOCK_DGRAM, IPPROTO_UDP);
-	if (asock < 0)
+	if (asock == -1)
 		err(1, "socket");
 	optval = 1;
 	if (setsockopt(asock, SOL_SOCKET, SO_REUSEPORT, &optval,
 	    sizeof(optval)) == -1)
 		err(1, "setsockopt reuseport");
-	if (bind(asock, (struct sockaddr *)&local, locallen) < 0)
+	if (bind(asock, (struct sockaddr *)&local, locallen) == -1)
 		err(1, "bind");
-	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) < 0)
+	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) == -1)
 		err(1, "connect");
 
 	memset(&hints, 0, sizeof(hints));
@@ -434,17 +434,17 @@ receiving_cb(int lsock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
-	if (fcntl(csock, F_SETFL, 0) < 0)
+	if (fcntl(csock, F_SETFL, 0) == -1)
 		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	out = send(csock, buf, in, 0);
-	if (out < 0)
+	if (out == -1)
 		err(1, "send");
 	if (out != in)
 		errx(1, "partial send %zd of %zd", out, in);
 
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
-	if (gettimeofday(&evs->begin, NULL) < 0)
+	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
 	if (splicemode)
@@ -499,7 +499,7 @@ nameinfo_print(const char *name, const char *side, struct sockaddr_storage *ss,
 void
 stream_splice(struct ev_splice *evs, int from, int to)
 {
-	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &to, sizeof(int)) < 0)
+	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &to, sizeof(int)) == -1)
 		err(1, "setsockopt SO_SPLICE");
 
 	evs->sock = to;
@@ -515,7 +515,7 @@ dgram_splice(struct ev_splice *evs, int from, int to)
 	sp.sp_fd = to;
 	sp.sp_idle.tv_sec = timeout_idle;
 
-	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) < 0)
+	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) == -1)
 		err(1, "setsockopt SO_SPLICE");
 
 	evs->sock = to;
@@ -537,10 +537,10 @@ unsplice_cb(int from, short event, void *arg)
 		/* fall through to print status line */
 	}
 
-	if (gettimeofday(&end, NULL) < 0)
+	if (gettimeofday(&end, NULL) == -1)
 		err(1, "gettimeofday end");
 	len = sizeof(error);
-	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) == -1)
 		err(1, "getsockopt SO_ERROR");
 	if (error == ETIMEDOUT) {
 		struct timeval idle;
@@ -556,7 +556,7 @@ unsplice_cb(int from, short event, void *arg)
 		err(1, "splice");
 	}
 	len = sizeof(splicelen);
-	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) < 0)
+	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) == -1)
 		err(1, "getsockopt SO_SPLICE");
 	print_status("splice", splicelen, &evs->begin, &end);
 
@@ -577,17 +577,17 @@ process_copy(struct ev_splice *evs, int from, int to)
 	if (udpmode) {
 		idle.tv_sec = timeout_idle;
 		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &idle,
-		    sizeof(idle)) < 0)
+		    sizeof(idle)) == -1)
 			err(1, "setsockopt SO_RCVTIMEO");
 	}
-	if (pipe(pfds) < 0)
+	if (pipe(pfds) == -1)
 		err(1, "pipe");
 	if (fflush(stdout) != 0)
 		err(1, "fflush");
 
 	/* fork a process so that multiple streams copy in parallel */
 	child = fork();
-	if (child < 0)
+	if (child == -1)
 		err(1, "fork");
 
 	if (child == 0) {
@@ -606,21 +606,21 @@ process_copy(struct ev_splice *evs, int from, int to)
 			ssize_t in, out;
 
 			in = recv(from, buf, bufsize, 0);
-			if (in < 0 && errno == EWOULDBLOCK)
+			if (in == -1 && errno == EWOULDBLOCK)
 				break;
-			if (in < 0)
+			if (in == -1)
 				err(1, "read");
 			if (in == 0 && !udpmode)
 				break;
 			out = send(to, buf, in, 0);
-			if (out < 0)
+			if (out == -1)
 				err(1, "write");
 			if (out != in)
 				errx(1, "partial write %zd of %zd", out, in);
 			copylen += out;
 		}
 
-		if (gettimeofday(&end, NULL) < 0)
+		if (gettimeofday(&end, NULL) == -1)
 			err(1, "gettimeofday end");
 		timersub(&end, &idle, &end);
 		print_status("copy", copylen, &evs->begin, &end);
@@ -652,7 +652,7 @@ waitpid_cb(int pfd, short event, void *arg)
 		/* fall through to collect child */
 	}
 
-	if (waitpid(child, &status, 0) < 0)
+	if (waitpid(child, &status, 0) == -1)
 		err(1, "waitpid");
 	if (status != 0)
 		errx(1, "copy child: %d", status);
@@ -696,12 +696,12 @@ socket_connect(const char *host, const char *service,
 		if (bindhost == NULL && bindservice == NULL) {
 			sock = socket(res->ai_family, res->ai_socktype |
 			    SOCK_NONBLOCK, res->ai_protocol);
-			if (sock < 0) {
+			if (sock == -1) {
 				cause = "socket";
 				continue;
 			}
-			if (connect(sock, res->ai_addr, res->ai_addrlen) < 0 &&
-			    errno != EINPROGRESS) {
+			if (connect(sock, res->ai_addr, res->ai_addrlen) == -1
+			    && errno != EINPROGRESS) {
 				cause = "connect";
 				save_errno = errno;
 				close(sock);
@@ -712,12 +712,12 @@ socket_connect(const char *host, const char *service,
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindservice,
 			    hints, &cause);
-			if (sock < 0)
+			if (sock == -1)
 				continue;
 		}
 		break;  /* okay we got one */
 	}
-	if (sock < 0) {
+	if (sock == -1) {
 		err(1, "%s %s%s%s%s%s%s%s", cause,
 		    bindhost ? bindhost : "",
 		    (bindhost && bindservice) ? " " : "",
@@ -755,11 +755,11 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 	for (bindres = bindres0; bindres; bindres = bindres->ai_next) {
 		sock = socket(bindres->ai_family, bindres->ai_socktype |
 		    SOCK_NONBLOCK, bindres->ai_protocol);
-		if (sock < 0) {
+		if (sock == -1) {
 			*cause = "socket";
 			continue;
 		}
-		if (bind(sock, bindres->ai_addr, bindres->ai_addrlen) < 0) {
+		if (bind(sock, bindres->ai_addr, bindres->ai_addrlen) == -1) {
 			*cause = "bind";
 			save_errno = errno;
 			close(sock);
@@ -767,7 +767,7 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 			sock = -1;
 			continue;
 		}
-		if (connect(sock, res->ai_addr, res->ai_addrlen) < 0 &&
+		if (connect(sock, res->ai_addr, res->ai_addrlen) == -1 &&
 		    errno != EINPROGRESS) {
 			*cause = "connect";
 			save_errno = errno;
@@ -802,7 +802,7 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 
 		sock = socket(res->ai_family, res->ai_socktype,
 		    res->ai_protocol);
-		if (sock < 0) {
+		if (sock == -1) {
 			cause = "socket";
 			continue;
 		}
@@ -810,28 +810,28 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 			optval = 1;
 #ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
-			    &optval, sizeof(optval)) < 0)
+			    &optval, sizeof(optval)) == -1)
 				err(1, "setsockopt IP_RECVDSTADDR");
 #endif
 #ifdef __linux__
 			if (setsockopt(sock, IPPROTO_IP, IP_PKTINFO,
-			    &optval, sizeof(optval)) < 0)
+			    &optval, sizeof(optval)) == -1)
 				err(1, "setsockopt IP_PKTINFO");
 #endif
 #ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
-			    &optval, sizeof(optval)) < 0)
+			    &optval, sizeof(optval)) == -1)
 				err(1, "setsockopt IP_RECVDSTPORT");
 #endif
 		}
 		if (udpmode && res->ai_family == AF_INET6) {
 			optval = 1;
 			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO,
-			    &optval, sizeof(optval)) < 0)
+			    &optval, sizeof(optval)) == -1)
 				err(1, "setsockopt IPV6_RECVDSTPORT");
 #ifdef __OpenBSD__
 			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVDSTPORT,
-			    &optval, sizeof(optval)) < 0)
+			    &optval, sizeof(optval)) == -1)
 				err(1, "setsockopt IPV6_RECVDSTPORT");
 #endif
 		}
@@ -840,7 +840,7 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		    SOCK_DGRAM ?  SO_REUSEPORT : SO_REUSEADDR, &optval,
 		    sizeof(optval)) == -1)
 			err(1, "setsockopt reuseaddr");
-		if (bind(sock, res->ai_addr, res->ai_addrlen) < 0) {
+		if (bind(sock, res->ai_addr, res->ai_addrlen) == -1) {
 			cause = "bind";
 			save_errno = errno;
 			close(sock);
@@ -850,7 +850,7 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		}
 		break;  /* okay we got one */
 	}
-	if (sock < 0) {
+	if (sock == -1) {
 		err(1, "%s %s%s%s", cause, host ? host : "",
 		    (host && service) ? " " : "", service ? service : "");
 	}
@@ -893,7 +893,7 @@ timeout_event(struct event *ev, int fd, short events,
 		event_add(ev, NULL);
 		return;
 	}
-	if (gettimeofday(&timeo, NULL) < 0)
+	if (gettimeofday(&timeo, NULL) == -1)
 		err(1, "gettimeofday timeo");
 	if (timercmp(&stop, &timeo, <=)) {
 		callback(fd, EV_TIMEOUT, arg);
