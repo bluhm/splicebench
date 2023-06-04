@@ -37,7 +37,9 @@ int family = AF_UNSPEC;
 int buffersize = 0, splicemode = 1, udpmode = 0;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
+#ifndef __OpenBSD__
 uint16_t listensockport;
+#endif
 struct timeval stop;
 int has_timedout;
 const int timeout_idle = 1;
@@ -206,10 +208,12 @@ socket_listen(void)
 
 	lsock = socket_bind(listenhost, listenport, &hints);
 	localinfo_print("listen", lsock, &local);
+#ifndef __OpenBSD__
 	if (local.ss_family == AF_INET)
 		listensockport = ((struct sockaddr_in *)(&local))->sin_port;
 	if (local.ss_family == AF_INET6)
 		listensockport = ((struct sockaddr_in6 *)(&local))->sin6_port;
+#endif
 
 	if ((ev = malloc(sizeof(*ev))) == NULL)
 		err(1, "malloc ev listen");
