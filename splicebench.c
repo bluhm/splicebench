@@ -34,7 +34,7 @@
 #include <unistd.h>
 
 int family = AF_UNSPEC;
-int splicemode = 1, udpmode = 0;
+int buffersize = 0, splicemode = 1, udpmode = 0;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 uint16_t listensockport;
@@ -75,10 +75,11 @@ void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46cu] [-t timeout] "
+	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-t timeout] "
 	    "[listen] [bindout] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
+	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
 	    "    -t timeout     global timeout, default 5 seconds\n"
 	    "    -u             splice UDP instead of TCP\n"
@@ -95,13 +96,19 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46ct:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46b:ct:u")) != -1) {
 		switch (ch) {
 		case '4':
 			family = AF_INET;
 			break;
 		case '6':
 			family = AF_INET6;
+			break;
+		case 'b':
+			buffersize = strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr != NULL)
+				errx(1, "buffer size is %s: %s",
+				    errstr, optarg);
 			break;
 		case 'c':
 			splicemode = 0;
@@ -281,8 +288,6 @@ connected_cb(int csock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
-	if (fcntl(csock, F_SETFL, 0) == -1)
-		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
@@ -415,6 +420,11 @@ receiving_cb(int lsock, short event, void *arg)
 	asock = socket(foreign.ss_family, SOCK_DGRAM, IPPROTO_UDP);
 	if (asock == -1)
 		err(1, "socket");
+	if (buffersize) {
+		if (setsockopt(asock, SOL_SOCKET, SO_RCVBUF, &buffersize,
+		    sizeof(buffersize)) == -1)
+			err(1, "setsockopt SO_RCVBUF %d", buffersize);
+	}
 	optval = 1;
 	if (setsockopt(asock, SOL_SOCKET, SO_REUSEPORT, &optval,
 	    sizeof(optval)) == -1)
@@ -434,8 +444,6 @@ receiving_cb(int lsock, short event, void *arg)
 	localinfo_print("connect", csock, &ss);
 	foreigninfo_print("connect", csock, &ss);
 
-	if (fcntl(csock, F_SETFL, 0) == -1)
-		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	out = send(csock, buf, in, 0);
 	if (out == -1)
 		err(1, "send");
@@ -700,6 +708,12 @@ socket_connect(const char *host, const char *service,
 				cause = "socket";
 				continue;
 			}
+			if (buffersize) {
+				if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+				    &buffersize, sizeof(buffersize)) == -1)
+					err(1, "setsockopt SO_SNDBUF %d",
+					    buffersize);
+			}
 			if (connect(sock, res->ai_addr, res->ai_addrlen) == -1
 			    && errno != EINPROGRESS) {
 				cause = "connect";
@@ -709,6 +723,8 @@ socket_connect(const char *host, const char *service,
 				sock = -1;
 				continue;
 			}
+			if (fcntl(sock, F_SETFL, 0) == -1)
+				err(1, "fcntl F_SETFL clear O_NONBLOCK");
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindservice,
 			    hints, &cause);
@@ -759,6 +775,11 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 			*cause = "socket";
 			continue;
 		}
+		if (buffersize) {
+			if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &buffersize,
+			    sizeof(buffersize)) == -1)
+				err(1, "setsockopt SO_SNDBUF %d", buffersize);
+		}
 		if (bind(sock, bindres->ai_addr, bindres->ai_addrlen) == -1) {
 			*cause = "bind";
 			save_errno = errno;
@@ -776,6 +797,8 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 			sock = -1;
 			continue;
 		}
+		if (fcntl(sock, F_SETFL, 0) == -1)
+			err(1, "fcntl F_SETFL clear O_NONBLOCK");
 		break;  /* okay we got one */
 	}
 	freeaddrinfo(bindres0);
@@ -805,6 +828,11 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 		if (sock == -1) {
 			cause = "socket";
 			continue;
+		}
+		if (buffersize) {
+			if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &buffersize,
+			    sizeof(buffersize)) == -1)
+				err(1, "setsockopt SO_RCVBUF %d", buffersize);
 		}
 		if (udpmode && res->ai_family == AF_INET) {
 			optval = 1;
