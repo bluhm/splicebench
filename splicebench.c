@@ -691,8 +691,8 @@ print_status(const char *action, long long datalen,
 }
 
 int
-socket_connect(const char *host, const char *service,
-    const char *bindhost, const char *bindservice,
+socket_connect(const char *host, const char *serv,
+    const char *bindhost, const char *bindserv,
     struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
@@ -700,12 +700,12 @@ socket_connect(const char *host, const char *service,
 	int save_errno;
 	const char *cause = NULL;
 
-	error = getaddrinfo(host, service, hints, &res0);
+	error = getaddrinfo(host, serv, hints, &res0);
 	if (error)
 		errx(1, "getaddrinfo: %s", gai_strerror(error));
 	sock = -1;
 	for (res = res0; res; res = res->ai_next) {
-		if (bindhost == NULL && bindservice == NULL) {
+		if (bindhost == NULL && bindserv == NULL) {
 			sock = socket(res->ai_family, res->ai_socktype |
 			    SOCK_NONBLOCK, res->ai_protocol);
 			if (sock == -1) {
@@ -730,7 +730,7 @@ socket_connect(const char *host, const char *service,
 			if (fcntl(sock, F_SETFL, 0) == -1)
 				err(1, "fcntl F_SETFL clear O_NONBLOCK");
 		} else {
-			sock = socket_bind_connect(res, bindhost, bindservice,
+			sock = socket_bind_connect(res, bindhost, bindserv,
 			    hints, &cause);
 			if (sock == -1)
 				continue;
@@ -740,12 +740,12 @@ socket_connect(const char *host, const char *service,
 	if (sock == -1) {
 		err(1, "%s %s%s%s%s%s%s%s", cause,
 		    bindhost ? bindhost : "",
-		    (bindhost && bindservice) ? " " : "",
-		    bindservice ? bindservice : "",
-		    (bindhost || bindservice) ? " " : "",
+		    (bindhost && bindserv) ? " " : "",
+		    bindserv ? bindserv : "",
+		    (bindhost || bindserv) ? " " : "",
 		    host ? host : "",
-		    (host && service) ? " " : "",
-		    service ? service : "");
+		    (host && serv) ? " " : "",
+		    serv ? serv : "");
 	}
 	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
@@ -753,8 +753,8 @@ socket_connect(const char *host, const char *service,
 }
 
 int
-socket_bind_connect(struct addrinfo *res, const char *host,
-    const char *service, struct addrinfo *hints, const char **cause)
+socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
+    struct addrinfo *hints, const char **cause)
 {
 	struct addrinfo *bindres, *bindres0;
 	int error, sock;
@@ -765,10 +765,10 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 	hints->ai_protocol = res->ai_protocol;
 	hints->ai_flags = AI_PASSIVE;
 
-	error = getaddrinfo(host, service, hints, &bindres0);
+	error = getaddrinfo(host, serv, hints, &bindres0);
 	if (error) {
 		errx(1, "getaddrinfo %s%s%s: %s", host ? host : "",
-		    (host && service) ? " " : "", service ? service : "",
+		    (host && serv) ? " " : "", serv ? serv : "",
 		    gai_strerror(error));
 	}
 	sock = -1;
@@ -810,17 +810,17 @@ socket_bind_connect(struct addrinfo *res, const char *host,
 }
 
 int
-socket_bind(const char *host, const char *service, struct addrinfo *hints)
+socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
 	int error, sock;
 	int save_errno;
 	const char *cause = NULL;
 
-	error = getaddrinfo(host, service, hints, &res0);
+	error = getaddrinfo(host, serv, hints, &res0);
 	if (error) {
 		errx(1, "getaddrinfo %s%s%s: %s", host ? host : "",
-		    (host && service) ? " " : "", service ? service : "",
+		    (host && serv) ? " " : "", serv ? serv : "",
 		    gai_strerror(error));
 	}
 	sock = -1;
@@ -884,7 +884,7 @@ socket_bind(const char *host, const char *service, struct addrinfo *hints)
 	}
 	if (sock == -1) {
 		err(1, "%s %s%s%s", cause, host ? host : "",
-		    (host && service) ? " " : "", service ? service : "");
+		    (host && serv) ? " " : "", serv ? serv : "");
 	}
 	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
