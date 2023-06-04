@@ -80,7 +80,7 @@ usage(void)
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -c             copy instead of splice\n"
-	    "    -t timeout     global timeout, default 1 second\n"
+	    "    -t timeout     global timeout, default 5 seconds\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
 	exit(2);
@@ -90,7 +90,7 @@ int
 main(int argc, char *argv[])
 {
 	const char *errstr;
-	int ch, timeout = 1;
+	int ch, timeout = 5;
 
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
