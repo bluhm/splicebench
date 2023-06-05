@@ -1,5 +1,7 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
+1.02
+
 1.01 2023-06-05
   * Create gpg signature .asc for released .tar.gz files.
   * Parameter -b bufsize sets send and recv buffer size.
