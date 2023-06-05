@@ -6,10 +6,11 @@ BINDIR?=	/usr/local/bin
 MANDIR?=	/usr/local/man/man
 
 VERSION=	1.01
-CLEANFILES=	splicebench-${VERSION}.tar.gz
+CLEANFILES=	splicebench-${VERSION}.tar.gz*
 
 .PHONY: dist splicebench-${VERSION}.tar.gz
 dist: splicebench-${VERSION}.tar.gz
+	gpg --armor --detach-sign splicebench-${VERSION}.tar.gz
 	@echo ${.OBJDIR}/splicebench-${VERSION}.tar.gz
 
 splicebench-${VERSION}.tar.gz:
