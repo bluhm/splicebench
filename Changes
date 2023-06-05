@@ -1,6 +1,14 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.01
+1.01 2023-06-05
+  * Create gpg signature .asc for released .tar.gz files.
+  * Parameter -b bufsize sets send and recv buffer size.
+  * Idle timeout is fixed 1 second.
+  * Timeout parameter is a global limit with default 5 seconds.
+  * Print format of sockname and peername changed.
+  * Allow DNS names for addresses and service names for ports.
+  * Print a status line after splice or copy has finished.
+  * Run splicebench with pledge "stdio dns inet proc".
 
 1.00 2023-06-02
   * Convert the splice or copy parameter into a copy switch.
