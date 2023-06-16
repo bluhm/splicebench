@@ -24,6 +24,8 @@
 .Nm
 .Bk -words
 .Op Fl 46cu
+.Op Fl b Ar bufsize
+.Op Fl i Ar idle
 .Op Fl t Ar timeout
 .Op Ar listen
 .Op Ar bindout
@@ -46,8 +48,13 @@ to use IPv4 listen address only.
 Force
 .Nm
 to use IPv6 listen addresses only.
+.It Fl b Ar bufsize
+Set size of send and receive socket buffer.
 .It Fl c
 Copy mode can be selected to compare performance to splice.
+.It Fl i Ar idle
+After a period of not receiving any packets, splice will stop.
+Default is 1 second, 0 will ignore idle periods.
 .It Fl t Ar timeout
 Waiting for connection and splicing are stopped after timeout.
 Disable timeout with 0 and run forever.
