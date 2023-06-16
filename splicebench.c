@@ -34,15 +34,15 @@
 #include <unistd.h>
 
 int family = AF_UNSPEC;
-int buffersize = 0, splicemode = 1, udpmode = 0;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
+int buffersize = 0, splicemode = 1, udpmode = 0;
+int idle = 1, timeout = 5;
 #ifndef __OpenBSD__
 uint16_t listensockport;
 #endif
 struct timeval stop;
 int has_timedout;
-const int timeout_idle = 1;
 
 struct ev_splice {
 	struct	event ev;
@@ -77,12 +77,13 @@ void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-t timeout] "
-	    "[listen] [bindout] connect\n"
+	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-i idle] "
+	    "[-t timeout] [listen] [bindout] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
+	    "    -i idle        idle timeout before splice stops\n"
 	    "    -t timeout     global timeout, default 5 seconds\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
@@ -93,12 +94,12 @@ int
 main(int argc, char *argv[])
 {
 	const char *errstr;
-	int ch, timeout = 5;
+	int ch;
 
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46b:ct:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46b:ci:t:u")) != -1) {
 		switch (ch) {
 		case '4':
 			family = AF_INET;
@@ -114,6 +115,12 @@ main(int argc, char *argv[])
 			break;
 		case 'c':
 			splicemode = 0;
+			break;
+		case 'i':
+			idle = strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr != NULL)
+				errx(1, "idle is %s: %s",
+				    errstr, optarg);
 			break;
 		case 't':
 			timeout = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -525,7 +532,7 @@ dgram_splice(struct ev_splice *evs, int from, int to)
 
 	memset(&sp, 0, sizeof(sp));
 	sp.sp_fd = to;
-	sp.sp_idle.tv_sec = timeout_idle;
+	sp.sp_idle.tv_sec = idle;
 
 	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) == -1)
 		err(1, "setsockopt SO_SPLICE");
@@ -555,13 +562,13 @@ unsplice_cb(int from, short event, void *arg)
 	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) == -1)
 		err(1, "getsockopt SO_ERROR");
 	if (error == ETIMEDOUT) {
-		struct timeval idle;
+		struct timeval timeo;
 
 		error = 0;
 		/* last data was seen before idle time */
-		idle.tv_sec = timeout_idle;
-		idle.tv_usec = 0;
-		timersub(&end, &idle, &end);
+		timeo.tv_sec = idle;
+		timeo.tv_usec = 0;
+		timersub(&end, &timeo, &end);
 	}
 	if (error && error != ETIMEDOUT) {
 		errno = error;
@@ -581,15 +588,15 @@ unsplice_cb(int from, short event, void *arg)
 void
 process_copy(struct ev_splice *evs, int from, int to)
 {
-	struct timeval idle;
+	struct timeval timeo;
 	int pfds[2];
 	pid_t child;
 
-	timerclear(&idle);
+	timerclear(&timeo);
 	if (udpmode) {
-		idle.tv_sec = timeout_idle;
-		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &idle,
-		    sizeof(idle)) == -1)
+		timeo.tv_sec = idle;
+		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &timeo,
+		    sizeof(timeo)) == -1)
 			err(1, "setsockopt SO_RCVTIMEO");
 	}
 	if (pipe(pfds) == -1)
@@ -634,7 +641,7 @@ process_copy(struct ev_splice *evs, int from, int to)
 
 		if (gettimeofday(&end, NULL) == -1)
 			err(1, "gettimeofday end");
-		timersub(&end, &idle, &end);
+		timersub(&end, &timeo, &end);
 		print_status("copy", copylen, &evs->begin, &end);
 		if (fflush(stdout) != 0)
 			err(1, "fflush");
