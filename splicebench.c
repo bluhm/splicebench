@@ -33,10 +33,10 @@
 #include <string.h>
 #include <unistd.h>
 
-int family = AF_UNSPEC;
+int listenfamily = AF_UNSPEC;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
-int buffersize, splicemode = 1, udpmode;
+int buffersize, repeat, splicemode = 1, udpmode;
 int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
@@ -70,6 +70,8 @@ int	socket_connect(const char *, const char *, const char *, const char *,
 int	socket_bind_connect(struct addrinfo *, const char *,
 	    const char *, struct addrinfo *, const char **);
 int	socket_bind(const char *, const char *, struct addrinfo *);
+int	socket_bind_listen(int, int, int, struct sockaddr *, socklen_t,
+	    const char **);
 void	address_parse(const char *, char **, char **);
 void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
 	    void *);
@@ -78,12 +80,13 @@ static void
 usage(void)
 {
 	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-i idle] "
-	    "[-t timeout] [listen] [bindout] connect\n"
+	    "[-N repeat] [-t timeout] [listen] [bindout] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
 	    "    -i idle        idle timeout before splicing stops, default 1\n"
+	    "    -N repeat      run parallel splices with incremented address\n"
 	    "    -t timeout     global splice timeout, default 1\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
@@ -99,13 +102,13 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46b:ci:t:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46b:ci:N:t:u")) != -1) {
 		switch (ch) {
 		case '4':
-			family = AF_INET;
+			listenfamily = AF_INET;
 			break;
 		case '6':
-			family = AF_INET6;
+			listenfamily = AF_INET6;
 			break;
 		case 'b':
 			buffersize = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -120,6 +123,12 @@ main(int argc, char *argv[])
 			idle = strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr != NULL)
 				errx(1, "idle is %s: %s",
+				    errstr, optarg);
+			break;
+		case 'N':
+			repeat = strtonum(optarg, 0, 1000, &errstr);
+			if (errstr != NULL)
+				errx(1, "repeat number is %s: %s",
 				    errstr, optarg);
 			break;
 		case 't':
@@ -200,12 +209,12 @@ void
 socket_listen(void)
 {
 	struct addrinfo hints;
-	struct sockaddr_storage local;
-	int lsock;
+	struct sockaddr_storage ss;
+	int lsock, n;
 	struct event *ev;
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = family;
+	hints.ai_family = listenfamily;
 	if (udpmode) {
 		hints.ai_socktype = SOCK_DGRAM;
 		hints.ai_protocol = IPPROTO_UDP;
@@ -216,24 +225,49 @@ socket_listen(void)
 	hints.ai_flags = AI_PASSIVE;
 
 	lsock = socket_bind(listenhost, listenport, &hints);
-	localinfo_print("listen", lsock, &local);
+	localinfo_print("listen", lsock, &ss);
 #ifndef __OpenBSD__
-	if (local.ss_family == AF_INET)
-		listensockport = ((struct sockaddr_in *)(&local))->sin_port;
-	if (local.ss_family == AF_INET6)
-		listensockport = ((struct sockaddr_in6 *)(&local))->sin6_port;
+	if (ss.ss_family == AF_INET)
+		listensockport = ((struct sockaddr_in *)(&ss))->sin_port;
+	if (ss.ss_family == AF_INET6)
+		listensockport = ((struct sockaddr_in6 *)(&ss))->sin6_port;
 #endif
 
-	if ((ev = malloc(sizeof(*ev))) == NULL)
-		err(1, "malloc ev listen");
+	for (n = repeat; n >= 0; n--) {
+		const char *cause = NULL;
+		socklen_t sslen;
 
-	if (udpmode) {
-		timeout_event(ev, lsock, EV_READ, receiving_cb, ev);
-	} else {
-		if (listen(lsock, 1) == -1)
-			err(1, "listen");
+		if ((ev = malloc(sizeof(*ev))) == NULL)
+			err(1, "malloc ev listen");
 
-		timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
+		if (udpmode)
+			timeout_event(ev, lsock, EV_READ, receiving_cb, ev);
+		else
+			timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
+
+		if (n <= 1)
+			break;
+
+		switch (ss.ss_family) {
+			struct sockaddr_in *sin;
+			struct sockaddr_in6 *sin6;
+
+		case AF_INET:
+			sin = (struct sockaddr_in *)&ss;
+			((uint8_t *)&sin->sin_addr.s_addr)[3]++;
+			sslen = sizeof(struct sockaddr_in);
+			break;
+		case AF_INET6:
+			sin6 = (struct sockaddr_in6 *)&ss;
+			((uint8_t *)&sin6->sin6_addr.s6_addr)[15]++;
+			sslen = sizeof(struct sockaddr_in6);
+			break;
+		}
+		lsock = socket_bind_listen(ss.ss_family, hints.ai_socktype,
+		    hints.ai_protocol, (struct sockaddr *)&ss, sslen, &cause);
+		if (lsock == -1)
+			err(1, "%s %d", cause, n - 1);
+		localinfo_print("listen", lsock, &ss);
 	}
 }
 
@@ -705,8 +739,7 @@ socket_connect(const char *host, const char *serv,
     struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
-	int error, sock;
-	int save_errno;
+	int error, sock, save_errno;
 	const char *cause = NULL;
 
 	error = getaddrinfo(host, serv, hints, &res0);
@@ -766,8 +799,7 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
     struct addrinfo *hints, const char **cause)
 {
 	struct addrinfo *bindres, *bindres0;
-	int error, sock;
-	int save_errno;
+	int error, sock, save_errno;
 
 	hints->ai_family = res->ai_family;
 	hints->ai_socktype = res->ai_socktype;
@@ -823,7 +855,6 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
 	int error, sock;
-	int save_errno;
 	const char *cause = NULL;
 
 	error = getaddrinfo(host, serv, hints, &res0);
@@ -834,61 +865,11 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 	}
 	sock = -1;
 	for (res = res0; res; res = res->ai_next) {
-		int optval;
+		sock = socket_bind_listen(res->ai_family, res->ai_socktype,
+		    res->ai_protocol, res->ai_addr, res->ai_addrlen, &cause);
+		if (sock == -1)
+			continue;
 
-		sock = socket(res->ai_family, res->ai_socktype,
-		    res->ai_protocol);
-		if (sock == -1) {
-			cause = "socket";
-			continue;
-		}
-		if (buffersize) {
-			if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &buffersize,
-			    sizeof(buffersize)) == -1)
-				err(1, "setsockopt SO_RCVBUF %d", buffersize);
-		}
-		if (udpmode && res->ai_family == AF_INET) {
-			optval = 1;
-#ifdef __OpenBSD__
-			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
-			    &optval, sizeof(optval)) == -1)
-				err(1, "setsockopt IP_RECVDSTADDR");
-#endif
-#ifdef __linux__
-			if (setsockopt(sock, IPPROTO_IP, IP_PKTINFO,
-			    &optval, sizeof(optval)) == -1)
-				err(1, "setsockopt IP_PKTINFO");
-#endif
-#ifdef __OpenBSD__
-			if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
-			    &optval, sizeof(optval)) == -1)
-				err(1, "setsockopt IP_RECVDSTPORT");
-#endif
-		}
-		if (udpmode && res->ai_family == AF_INET6) {
-			optval = 1;
-			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO,
-			    &optval, sizeof(optval)) == -1)
-				err(1, "setsockopt IPV6_RECVDSTPORT");
-#ifdef __OpenBSD__
-			if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVDSTPORT,
-			    &optval, sizeof(optval)) == -1)
-				err(1, "setsockopt IPV6_RECVDSTPORT");
-#endif
-		}
-		optval = 1;
-		if (setsockopt(sock, SOL_SOCKET, res->ai_socktype ==
-		    SOCK_DGRAM ?  SO_REUSEPORT : SO_REUSEADDR, &optval,
-		    sizeof(optval)) == -1)
-			err(1, "setsockopt reuseaddr");
-		if (bind(sock, res->ai_addr, res->ai_addrlen) == -1) {
-			cause = "bind";
-			save_errno = errno;
-			close(sock);
-			errno = save_errno;
-			sock = -1;
-			continue;
-		}
 		break;  /* okay we got one */
 	}
 	if (sock == -1) {
@@ -897,6 +878,69 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 	}
 	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
+	return sock;
+}
+
+int
+socket_bind_listen(int family, int socktype, int protocol,
+    struct sockaddr *sa, socklen_t salen, const char **cause)
+{
+	int sock, optval, save_errno;
+
+	sock = socket(family, socktype, protocol);
+	if (sock == -1) {
+		*cause = "socket";
+		return -1;
+	}
+	if (buffersize) {
+		if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &buffersize,
+		    sizeof(buffersize)) == -1)
+			err(1, "setsockopt SO_RCVBUF %d", buffersize);
+	}
+	if (udpmode && family == AF_INET) {
+		optval = 1;
+#ifdef __OpenBSD__
+		if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTADDR,
+		    &optval, sizeof(optval)) == -1)
+			err(1, "setsockopt IP_RECVDSTADDR");
+#endif
+#ifdef __linux__
+		if (setsockopt(sock, IPPROTO_IP, IP_PKTINFO,
+		    &optval, sizeof(optval)) == -1)
+			err(1, "setsockopt IP_PKTINFO");
+#endif
+#ifdef __OpenBSD__
+		if (setsockopt(sock, IPPROTO_IP, IP_RECVDSTPORT,
+		    &optval, sizeof(optval)) == -1)
+			err(1, "setsockopt IP_RECVDSTPORT");
+#endif
+	}
+	if (udpmode && family == AF_INET6) {
+		optval = 1;
+		if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO,
+		    &optval, sizeof(optval)) == -1)
+			err(1, "setsockopt IPV6_RECVDSTPORT");
+#ifdef __OpenBSD__
+		if (setsockopt(sock, IPPROTO_IPV6, IPV6_RECVDSTPORT,
+		    &optval, sizeof(optval)) == -1)
+			err(1, "setsockopt IPV6_RECVDSTPORT");
+#endif
+	}
+	optval = 1;
+	if (setsockopt(sock, SOL_SOCKET, socktype == SOCK_DGRAM ?
+	    SO_REUSEPORT : SO_REUSEADDR, &optval, sizeof(optval)) == -1)
+		err(1, "setsockopt reuseaddr");
+	if (bind(sock, sa, salen) == -1) {
+		*cause = "bind";
+		save_errno = errno;
+		close(sock);
+		errno = save_errno;
+		return -1;
+	}
+	if (socktype == SOCK_STREAM) {
+		if (listen(sock, 1) == -1)
+			err(1, "listen");
+	}
 	return sock;
 }
 
