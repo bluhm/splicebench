@@ -36,8 +36,8 @@
 int family = AF_UNSPEC;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
-int buffersize = 0, splicemode = 1, udpmode = 0;
-int idle = 1, timeout = 5;
+int buffersize, splicemode = 1, udpmode;
+int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
 #endif
@@ -83,8 +83,8 @@ usage(void)
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
-	    "    -i idle        idle timeout before splice stops\n"
-	    "    -t timeout     global timeout, default 5 seconds\n"
+	    "    -i idle        idle timeout before splicing stops, default 1\n"
+	    "    -t timeout     global splice timeout, default 1\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
 	exit(2);
@@ -176,7 +176,9 @@ main(int argc, char *argv[])
 	if (timeout) {
 		if (gettimeofday(&stop, NULL) == -1)
 			err(1, "gettimeofday stop");
-		stop.tv_sec += timeout;
+		stop.tv_sec += timeout + 1;
+		if (udpmode)
+			stop.tv_sec += idle;
 	}
 
 	event_init();
@@ -593,7 +595,7 @@ process_copy(struct ev_splice *evs, int from, int to)
 	pid_t child;
 
 	timerclear(&timeo);
-	if (udpmode) {
+	if (udpmode && idle) {
 		timeo.tv_sec = idle;
 		if (setsockopt(from, SOL_SOCKET, SO_RCVTIMEO, &timeo,
 		    sizeof(timeo)) == -1)
