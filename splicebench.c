@@ -69,6 +69,8 @@ int	socket_connect(const char *, const char *, const char *, const char *,
 	    struct addrinfo *);
 int	socket_bind_connect(struct addrinfo *, const char *,
 	    const char *, struct addrinfo *, const char **);
+int	socket_connect_unblock(int, int, int, const struct sockaddr *,
+	    socklen_t, const struct sockaddr *, socklen_t, const char **);
 int	socket_bind(const char *, const char *, struct addrinfo *);
 int	socket_bind_listen(int, int, int, struct sockaddr *, socklen_t,
 	    const char **);
@@ -352,8 +354,10 @@ receiving_cb(int lsock, short event, void *arg)
 	struct event *ev = arg;
 	struct addrinfo hints;
 	char buf[64*1024];
-	struct sockaddr_storage foreign, local, ss;
+	struct sockaddr_storage foreign, local;
 	socklen_t foreignlen, locallen;
+	static struct sockaddr_storage cforeign, clocal;
+	static int cn;
 	struct sockaddr_in *sin = NULL;
 	struct sockaddr_in6 *sin6 = NULL;
 	int asock, csock, optval;
@@ -486,10 +490,42 @@ receiving_cb(int lsock, short event, void *arg)
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
 
-	csock = socket_connect(connecthost, connectport,
-	    bindouthost, bindoutport, &hints);
-	localinfo_print("connect", csock, &ss);
-	foreigninfo_print("connect", csock, &ss);
+	if (!repeat || cn <= 0) {
+		csock = socket_connect(connecthost, connectport,
+		    bindouthost, bindoutport, &hints);
+		cn = repeat;
+	} else {
+		const char *cause = NULL;
+		socklen_t sslen;
+
+		switch (clocal.ss_family) {
+			struct sockaddr_in *fsin, *lsin;
+			struct sockaddr_in6 *fsin6, *lsin6;
+
+		case AF_INET:
+			fsin = (struct sockaddr_in *)&cforeign;
+			lsin = (struct sockaddr_in *)&clocal;
+			((uint8_t *)&fsin->sin_addr.s_addr)[3]++;
+			lsin->sin_port = 0;
+			sslen = sizeof(struct sockaddr_in);
+			break;
+		case AF_INET6:
+			fsin6 = (struct sockaddr_in6 *)&cforeign;
+			lsin6 = (struct sockaddr_in6 *)&clocal;
+			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15]++;
+			lsin6->sin6_port = 0;
+			sslen = sizeof(struct sockaddr_in6);
+			break;
+		}
+		csock = socket_connect_unblock(clocal.ss_family, SOCK_DGRAM,
+		    IPPROTO_UDP, (struct sockaddr *)&clocal, sslen,
+		    (struct sockaddr *)&cforeign, sslen, &cause);
+		if (csock == -1)
+			err(1, "%s %d", cause, cn - 1);
+		cn--;
+	}
+	localinfo_print("connect", csock, &clocal);
+	foreigninfo_print("connect", csock, &cforeign);
 
 	out = send(csock, buf, in, 0);
 	if (out == -1)
@@ -739,7 +775,7 @@ socket_connect(const char *host, const char *serv,
     struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
-	int error, sock, save_errno;
+	int error, sock;
 	const char *cause = NULL;
 
 	error = getaddrinfo(host, serv, hints, &res0);
@@ -748,35 +784,16 @@ socket_connect(const char *host, const char *serv,
 	sock = -1;
 	for (res = res0; res; res = res->ai_next) {
 		if (bindhost == NULL && bindserv == NULL) {
-			sock = socket(res->ai_family, res->ai_socktype |
-			    SOCK_NONBLOCK, res->ai_protocol);
-			if (sock == -1) {
-				cause = "socket";
-				continue;
-			}
-			if (buffersize) {
-				if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
-				    &buffersize, sizeof(buffersize)) == -1)
-					err(1, "setsockopt SO_SNDBUF %d",
-					    buffersize);
-			}
-			if (connect(sock, res->ai_addr, res->ai_addrlen) == -1
-			    && errno != EINPROGRESS) {
-				cause = "connect";
-				save_errno = errno;
-				close(sock);
-				errno = save_errno;
-				sock = -1;
-				continue;
-			}
-			if (fcntl(sock, F_SETFL, 0) == -1)
-				err(1, "fcntl F_SETFL clear O_NONBLOCK");
+			sock = socket_connect_unblock(res->ai_family,
+			    res->ai_socktype, res->ai_protocol, NULL, 0,
+			    res->ai_addr, res->ai_addrlen, &cause);
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindserv,
 			    hints, &cause);
-			if (sock == -1)
-				continue;
 		}
+		if (sock == -1)
+			continue;
+
 		break;  /* okay we got one */
 	}
 	if (sock == -1) {
@@ -799,7 +816,7 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
     struct addrinfo *hints, const char **cause)
 {
 	struct addrinfo *bindres, *bindres0;
-	int error, sock, save_errno;
+	int error, sock;
 
 	hints->ai_family = res->ai_family;
 	hints->ai_socktype = res->ai_socktype;
@@ -814,39 +831,54 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
 	}
 	sock = -1;
 	for (bindres = bindres0; bindres; bindres = bindres->ai_next) {
-		sock = socket(bindres->ai_family, bindres->ai_socktype |
-		    SOCK_NONBLOCK, bindres->ai_protocol);
-		if (sock == -1) {
-			*cause = "socket";
+		sock = socket_connect_unblock(bindres->ai_family,
+		    bindres->ai_socktype, bindres->ai_protocol,
+		    bindres->ai_addr, bindres->ai_addrlen,
+		    res->ai_addr, res->ai_addrlen, cause);
+		if (sock == -1)
 			continue;
-		}
-		if (buffersize) {
-			if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &buffersize,
-			    sizeof(buffersize)) == -1)
-				err(1, "setsockopt SO_SNDBUF %d", buffersize);
-		}
-		if (bind(sock, bindres->ai_addr, bindres->ai_addrlen) == -1) {
-			*cause = "bind";
-			save_errno = errno;
-			close(sock);
-			errno = save_errno;
-			sock = -1;
-			continue;
-		}
-		if (connect(sock, res->ai_addr, res->ai_addrlen) == -1 &&
-		    errno != EINPROGRESS) {
-			*cause = "connect";
-			save_errno = errno;
-			close(sock);
-			errno = save_errno;
-			sock = -1;
-			continue;
-		}
-		if (fcntl(sock, F_SETFL, 0) == -1)
-			err(1, "fcntl F_SETFL clear O_NONBLOCK");
+
 		break;  /* okay we got one */
 	}
 	freeaddrinfo(bindres0);
+	return sock;
+}
+
+int
+socket_connect_unblock(int family, int socktype, int protocol,
+    const struct sockaddr *bindsa, socklen_t bindsalen,
+    const struct sockaddr *sa, socklen_t salen, const char **cause)
+{
+	int sock, save_errno;
+
+	sock = socket(family, socktype | SOCK_NONBLOCK, protocol);
+	if (sock == -1) {
+		*cause = "socket";
+		return -1;
+	}
+	if (buffersize) {
+		if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+		    &buffersize, sizeof(buffersize)) == -1)
+			err(1, "setsockopt SO_SNDBUF %d", buffersize);
+	}
+	if (bindsa != NULL && bind(sock, bindsa, bindsalen) == -1) {
+		*cause = "bind";
+		save_errno = errno;
+		close(sock);
+		errno = save_errno;
+		sock = -1;
+		return -1;
+	}
+	if (connect(sock, sa, salen) == -1 && errno != EINPROGRESS) {
+		*cause = "connect";
+		save_errno = errno;
+		close(sock);
+		errno = save_errno;
+		sock = -1;
+		return -1;
+	}
+	if (fcntl(sock, F_SETFL, 0) == -1)
+		err(1, "fcntl F_SETFL clear O_NONBLOCK");
 	return sock;
 }
 
