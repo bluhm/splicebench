@@ -65,6 +65,7 @@ void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
 void	print_status(const char *, long long, const struct timeval *,
 	    const struct timeval *);
+int	socket_connect_repeat(void);
 int	socket_connect(const char *, const char *, const char *, const char *,
 	    struct addrinfo *);
 int	socket_bind_connect(struct addrinfo *, const char *,
@@ -277,7 +278,6 @@ void
 accepting_cb(int lsock, short event, void *arg)
 {
 	struct event *ev = arg;
-	struct addrinfo hints;
 	struct sockaddr_storage ss;
 	socklen_t sslen;
 	int asock, csock;
@@ -297,18 +297,7 @@ accepting_cb(int lsock, short event, void *arg)
 	nameinfo_print("accept", "peer", &ss, sslen);
 	localinfo_print("accept", asock, &ss);
 
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	if (udpmode) {
-		hints.ai_socktype = SOCK_DGRAM;
-		hints.ai_protocol = IPPROTO_UDP;
-	} else {
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_protocol = IPPROTO_TCP;
-	}
-
-	csock = socket_connect(connecthost, connectport,
-	    bindouthost, bindoutport, &hints);
+	csock = socket_connect_repeat();
 
 	if ((evs = malloc(sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
@@ -324,7 +313,6 @@ connected_cb(int csock, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
 	int asock = evs->sock;
-	struct sockaddr_storage ss;
 
 	if (event & EV_TIMEOUT) {
 		has_timedout = 1;
@@ -333,9 +321,6 @@ connected_cb(int csock, short event, void *arg)
 		free(evs);
 		return;
 	}
-
-	localinfo_print("connect", csock, &ss);
-	foreigninfo_print("connect", csock, &ss);
 
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
@@ -352,12 +337,9 @@ void
 receiving_cb(int lsock, short event, void *arg)
 {
 	struct event *ev = arg;
-	struct addrinfo hints;
 	char buf[64*1024];
 	struct sockaddr_storage foreign, local;
 	socklen_t foreignlen, locallen;
-	static struct sockaddr_storage cforeign, clocal;
-	static int cn;
 	struct sockaddr_in *sin = NULL;
 	struct sockaddr_in6 *sin6 = NULL;
 	int asock, csock, optval;
@@ -485,47 +467,7 @@ receiving_cb(int lsock, short event, void *arg)
 	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) == -1)
 		err(1, "connect");
 
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM;
-	hints.ai_protocol = IPPROTO_UDP;
-
-	if (!repeat || cn <= 0) {
-		csock = socket_connect(connecthost, connectport,
-		    bindouthost, bindoutport, &hints);
-		cn = repeat;
-	} else {
-		const char *cause = NULL;
-		socklen_t sslen;
-
-		switch (clocal.ss_family) {
-			struct sockaddr_in *fsin, *lsin;
-			struct sockaddr_in6 *fsin6, *lsin6;
-
-		case AF_INET:
-			fsin = (struct sockaddr_in *)&cforeign;
-			lsin = (struct sockaddr_in *)&clocal;
-			((uint8_t *)&fsin->sin_addr.s_addr)[3]++;
-			lsin->sin_port = 0;
-			sslen = sizeof(struct sockaddr_in);
-			break;
-		case AF_INET6:
-			fsin6 = (struct sockaddr_in6 *)&cforeign;
-			lsin6 = (struct sockaddr_in6 *)&clocal;
-			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15]++;
-			lsin6->sin6_port = 0;
-			sslen = sizeof(struct sockaddr_in6);
-			break;
-		}
-		csock = socket_connect_unblock(clocal.ss_family, SOCK_DGRAM,
-		    IPPROTO_UDP, (struct sockaddr *)&clocal, sslen,
-		    (struct sockaddr *)&cforeign, sslen, &cause);
-		if (csock == -1)
-			err(1, "%s %d", cause, cn - 1);
-		cn--;
-	}
-	localinfo_print("connect", csock, &clocal);
-	foreigninfo_print("connect", csock, &cforeign);
+	csock = socket_connect_repeat();
 
 	out = send(csock, buf, in, 0);
 	if (out == -1)
@@ -546,6 +488,65 @@ receiving_cb(int lsock, short event, void *arg)
 
 	close(lsock);
 	free(ev);
+}
+
+int
+socket_connect_repeat(void)
+{
+	struct addrinfo hints;
+	static struct sockaddr_storage foreign, local;
+	static int n;
+	int sock;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	if (udpmode) {
+		hints.ai_socktype = SOCK_DGRAM;
+		hints.ai_protocol = IPPROTO_UDP;
+	} else {
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_protocol = IPPROTO_TCP;
+	}
+
+	if (!repeat || n <= 0) {
+		sock = socket_connect(connecthost, connectport,
+		    bindouthost, bindoutport, &hints);
+		n = repeat;
+	} else {
+		const char *cause = NULL;
+		socklen_t sslen;
+
+		switch (local.ss_family) {
+			struct sockaddr_in *fsin, *lsin;
+			struct sockaddr_in6 *fsin6, *lsin6;
+
+		case AF_INET:
+			fsin = (struct sockaddr_in *)&foreign;
+			lsin = (struct sockaddr_in *)&local;
+			((uint8_t *)&fsin->sin_addr.s_addr)[3]++;
+			lsin->sin_port = 0;
+			sslen = sizeof(struct sockaddr_in);
+			break;
+		case AF_INET6:
+			fsin6 = (struct sockaddr_in6 *)&foreign;
+			lsin6 = (struct sockaddr_in6 *)&local;
+			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15]++;
+			lsin6->sin6_port = 0;
+			sslen = sizeof(struct sockaddr_in6);
+			break;
+		}
+		sock = socket_connect_unblock(local.ss_family,
+		    hints.ai_socktype, hints.ai_protocol,
+		    (struct sockaddr *)&local, sslen,
+		    (struct sockaddr *)&foreign, sslen, &cause);
+		if (sock == -1)
+			err(1, "%s %d", cause, n - 1);
+		n--;
+	}
+	localinfo_print("connect", sock, &local);
+	foreigninfo_print("connect", sock, &foreign);
+
+	return sock;
 }
 
 void
