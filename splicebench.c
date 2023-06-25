@@ -36,7 +36,7 @@
 int listenfamily = AF_UNSPEC;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
-int buffersize, repeat, splicemode = 1, udpmode;
+int buffersize, multi, repeat, splicemode = 1, udpmode;
 int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
@@ -83,13 +83,14 @@ static void
 usage(void)
 {
 	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-i idle] "
-	    "[-N repeat] [-t timeout] [listen] [bindout] connect\n"
+	    "[-N repeat] [-n multi] [-t timeout] [listen] [bindout] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
 	    "    -i idle        idle timeout before splicing stops, default 1\n"
 	    "    -N repeat      run parallel splices with incremented address\n"
+	    "    -n multi       run parallel splices multiple TCP accepts\n"
 	    "    -t timeout     global splice timeout, default 1\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
@@ -105,7 +106,7 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46b:ci:N:t:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46b:ci:N:n:t:u")) != -1) {
 		switch (ch) {
 		case '4':
 			listenfamily = AF_INET;
@@ -132,6 +133,12 @@ main(int argc, char *argv[])
 			repeat = strtonum(optarg, 0, 1000, &errstr);
 			if (errstr != NULL)
 				errx(1, "repeat number is %s: %s",
+				    errstr, optarg);
+			break;
+		case 'n':
+			multi = strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr != NULL)
+				errx(1, "multi number is %s: %s",
 				    errstr, optarg);
 			break;
 		case 't':
@@ -280,6 +287,7 @@ accepting_cb(int lsock, short event, void *arg)
 	struct event *ev = arg;
 	struct sockaddr_storage ss;
 	socklen_t sslen;
+	static int n;
 	int asock, csock;
 	struct ev_splice *evs;
 
@@ -304,8 +312,15 @@ accepting_cb(int lsock, short event, void *arg)
 
 	evs->sock = asock;
 	timeout_event(&evs->ev, csock, EV_WRITE, connected_cb, evs);
-	close(lsock);
-	free(ev);
+	if (multi > 1 && n != 1) {
+		timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
+		if (n == 0)
+			n = multi;
+		n--;
+	} else {
+		close(lsock);
+		free(ev);
+	}
 }
 
 void
