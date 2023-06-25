@@ -27,6 +27,7 @@
 .Op Fl b Ar bufsize
 .Op Fl i Ar idle
 .Op Fl N Ar repeat
+.Op Fl n Ar multi
 .Op Fl t Ar timeout
 .Op Ar listen
 .Op Ar bindout
@@ -60,6 +61,9 @@ Default is 1 second, 0 will ignore idle periods.
 Create multiple listen sockets on consecutive IP addresses.
 Each incoming request will be spliced to a different consecutive
 connect address.
+.It Fl N Ar multi
+Accept multiple TCP connections at listen socket.
+Run until all splicings have finished.
 .It Fl t Ar timeout
 Waiting for connection and splicing are stopped after timeout.
 When splicing, all data has to be transfered within this timeout
