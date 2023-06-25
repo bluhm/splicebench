@@ -313,6 +313,7 @@ connected_cb(int csock, short event, void *arg)
 {
 	struct ev_splice *evs = arg;
 	int asock = evs->sock;
+	struct sockaddr_storage ss;
 
 	if (event & EV_TIMEOUT) {
 		has_timedout = 1;
@@ -321,6 +322,8 @@ connected_cb(int csock, short event, void *arg)
 		free(evs);
 		return;
 	}
+
+	foreigninfo_print("connect", csock, &ss);
 
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
@@ -338,7 +341,7 @@ receiving_cb(int lsock, short event, void *arg)
 {
 	struct event *ev = arg;
 	char buf[64*1024];
-	struct sockaddr_storage foreign, local;
+	struct sockaddr_storage foreign, local, ss;
 	socklen_t foreignlen, locallen;
 	struct sockaddr_in *sin = NULL;
 	struct sockaddr_in6 *sin6 = NULL;
@@ -468,6 +471,7 @@ receiving_cb(int lsock, short event, void *arg)
 		err(1, "connect");
 
 	csock = socket_connect_repeat();
+	foreigninfo_print("connect", csock, &ss);
 
 	out = send(csock, buf, in, 0);
 	if (out == -1)
@@ -511,6 +515,7 @@ socket_connect_repeat(void)
 	if (!repeat || n <= 0) {
 		sock = socket_connect(connecthost, connectport,
 		    bindouthost, bindoutport, &hints);
+		memcpy(&foreign, hints.ai_addr, hints.ai_addrlen);
 		n = repeat;
 	} else {
 		const char *cause = NULL;
@@ -544,7 +549,6 @@ socket_connect_repeat(void)
 		n--;
 	}
 	localinfo_print("connect", sock, &local);
-	foreigninfo_print("connect", sock, &foreign);
 
 	return sock;
 }
@@ -776,6 +780,7 @@ socket_connect(const char *host, const char *serv,
     struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
+	static struct sockaddr_storage ss;
 	int error, sock;
 	const char *cause = NULL;
 
@@ -788,6 +793,10 @@ socket_connect(const char *host, const char *serv,
 			sock = socket_connect_unblock(res->ai_family,
 			    res->ai_socktype, res->ai_protocol, NULL, 0,
 			    res->ai_addr, res->ai_addrlen, &cause);
+			hints->ai_family = res->ai_family;
+			memcpy(&ss, res->ai_addr, res->ai_addrlen);
+			hints->ai_addr = (struct sockaddr *)&ss;
+			hints->ai_addrlen = res->ai_addrlen;
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindserv,
 			    hints, &cause);
@@ -807,7 +816,6 @@ socket_connect(const char *host, const char *serv,
 		    (host && serv) ? " " : "",
 		    serv ? serv : "");
 	}
-	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
 	return sock;
 }
@@ -817,6 +825,7 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
     struct addrinfo *hints, const char **cause)
 {
 	struct addrinfo *bindres, *bindres0;
+	static struct sockaddr_storage ss;
 	int error, sock;
 
 	hints->ai_family = res->ai_family;
@@ -838,6 +847,10 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
 		    res->ai_addr, res->ai_addrlen, cause);
 		if (sock == -1)
 			continue;
+		hints->ai_family = res->ai_family;
+		memcpy(&ss, res->ai_addr, res->ai_addrlen);
+		hints->ai_addr = (struct sockaddr *)&ss;
+		hints->ai_addrlen = res->ai_addrlen;
 
 		break;  /* okay we got one */
 	}
@@ -887,6 +900,7 @@ int
 socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
+	static struct sockaddr_storage ss;
 	int error, sock;
 	const char *cause = NULL;
 
@@ -902,6 +916,10 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 		    res->ai_protocol, res->ai_addr, res->ai_addrlen, &cause);
 		if (sock == -1)
 			continue;
+		hints->ai_family = res->ai_family;
+		memcpy(&ss, res->ai_addr, res->ai_addrlen);
+		hints->ai_addr = (struct sockaddr *)&ss;
+		hints->ai_addrlen = res->ai_addrlen;
 
 		break;  /* okay we got one */
 	}
@@ -909,7 +927,6 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 		err(1, "%s %s%s%s", cause, host ? host : "",
 		    (host && serv) ? " " : "", serv ? serv : "");
 	}
-	hints->ai_family = res->ai_family;
 	freeaddrinfo(res0);
 	return sock;
 }
