@@ -1,6 +1,12 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.02
+1.02 2023-07-04
+  * Repeat count is limited to 256.
+  * Option -n multi accepts multiple TCP connections at one listen
+    socket.
+  * Option -N repeat creates multiple listen sockets on consecutive
+    addresses and connects to consecutive destinations.
+  * Option -i idle sets timeout via command line.
 
 1.01 2023-06-05
   * Create gpg signature .asc for released .tar.gz files.
