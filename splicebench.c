@@ -662,14 +662,14 @@ unsplice_cb(int from, short event, void *arg)
 		timeo.tv_usec = 0;
 		timersub(&end, &timeo, &end);
 	}
-	if (error && error != ETIMEDOUT) {
-		errno = error;
-		err(1, "splice");
-	}
 	len = sizeof(splicelen);
 	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) == -1)
 		err(1, "getsockopt SO_SPLICE");
 	print_status("splice", splicelen, &evs->begin, &end);
+	if (error && error != ETIMEDOUT) {
+		errno = error;
+		err(1, "splice error");
+	}
 
 	close(from);
 	close(to);
