@@ -209,7 +209,7 @@ main(int argc, char *argv[])
 
 	event_dispatch();
 
-	if (has_timedout)
+	if (idle && has_timedout)
 		errx(1, "stopped by timeout");
 
 	return 0;
