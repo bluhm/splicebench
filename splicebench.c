@@ -41,7 +41,7 @@ int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
 #endif
-struct timeval stop;
+struct timeval start, finish;
 int has_timedout;
 
 struct ev_splice {
@@ -193,11 +193,11 @@ main(int argc, char *argv[])
 		connectport = "12345";
 
 	if (timeout) {
-		if (gettimeofday(&stop, NULL) == -1)
-			err(1, "gettimeofday stop");
-		stop.tv_sec += timeout + 1;
+		if (gettimeofday(&finish, NULL) == -1)
+			err(1, "gettimeofday finish");
+		finish.tv_sec += timeout + 1;
 		if (udpmode)
-			stop.tv_sec += idle;
+			finish.tv_sec += idle;
 	}
 
 	event_init();
@@ -235,6 +235,8 @@ socket_listen(void)
 	hints.ai_flags = AI_PASSIVE;
 
 	lsock = socket_bind(listenhost, listenport, &hints);
+	if (gettimeofday(&start, NULL) == -1)
+		err(1, "gettimeofday start");
 	localinfo_print("listen", lsock, &ss);
 #ifndef __OpenBSD__
 	if (ss.ss_family == AF_INET)
@@ -735,8 +737,6 @@ process_copy(struct ev_splice *evs, int from, int to)
 			err(1, "gettimeofday end");
 		timersub(&end, &timeo, &end);
 		print_status("copy", copylen, &evs->begin, &end);
-		if (fflush(stdout) != 0)
-			err(1, "fflush");
 		_exit(0);
 	}
 
@@ -776,17 +776,26 @@ void
 print_status(const char *action, long long datalen,
     const struct timeval *begin, const struct timeval *end)
 {
-	struct timeval duration;
+	struct timeval duration, stop;
 	double bits;
 
 	bits = (double)datalen * 8;
 	timersub(end, begin, &duration);
 	bits /= (double)duration.tv_sec + (double)duration.tv_usec / 1000000;
-	printf("%s: payload %lld, begin %lld.%06ld, end %lld.%06ld, "
-	    "duration %lld.%06ld, bit/s %g\n", action, datalen,
+	if (gettimeofday(&stop, NULL) == -1)
+		err(1, "gettimeofday stop");
+	fflush(stdout);
+	printf("%s: payload %lld, "
+	    "begin %lld.%06ld, end %lld.%06ld, "
+	    "duration %lld.%06ld, bit/s %g, "
+	    "start %lld.%06ld, stop %lld.%06ld\n",
+	    action, datalen,
 	    (long long)begin->tv_sec, begin->tv_usec,
 	    (long long)end->tv_sec, end->tv_usec,
-	    (long long)duration.tv_sec, duration.tv_usec, bits);
+	    (long long)duration.tv_sec, duration.tv_usec, bits,
+	    (long long)start.tv_sec, start.tv_usec,
+	    (long long)stop.tv_sec, stop.tv_usec);
+	fflush(stdout);
 }
 
 int
@@ -1038,18 +1047,18 @@ timeout_event(struct event *ev, int fd, short events,
 {
 	struct timeval timeo;
 
-	if (!timerisset(&stop)) {
+	if (!timerisset(&finish)) {
 		event_set(ev, fd, events, callback, arg);
 		event_add(ev, NULL);
 		return;
 	}
 	if (gettimeofday(&timeo, NULL) == -1)
 		err(1, "gettimeofday timeo");
-	if (timercmp(&stop, &timeo, <=)) {
+	if (timercmp(&finish, &timeo, <=)) {
 		callback(fd, EV_TIMEOUT, arg);
 		return;
 	}
-	timersub(&stop, &timeo, &timeo);
+	timersub(&finish, &timeo, &timeo);
 	event_set(ev, fd, events, callback, arg);
 	event_add(ev, &timeo);
 }
