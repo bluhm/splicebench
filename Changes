@@ -1,6 +1,9 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.03
+1.03 2024-01-27
+  * When runing into timeout, unsplice the sockets.
+  * Improve printing status line and explain it in man page.
+  * Better error handling after timeout.
 
 1.02 2023-07-04
   * Repeat count is limited to 256.
