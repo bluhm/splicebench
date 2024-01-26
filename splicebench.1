@@ -93,6 +93,30 @@ lets the kernel choose one.
 The unspecified address can be use to set the port or address family
 only.
 .\" .Sh EXAMPLES
+.Sh DIAGNOSTICS
+.Bl -diag
+.It "splice: payload 573635832, begin 1706272738.460010, end 1706272752.032744, duration 13.572734, bit/s 3.38111e+08, start 1706272738.022382, stop 1706272752.032814"
+.Pp
+Summary of
+.Nm
+splice or copy action.
+Status is printed as single line just before exit.
+.Bl -tag -width 8
+.It payload
+Bytes in the TCP stream or UDP payload of all packets.
+.It begin
+Time stamp just before the splicing starts.
+.It end
+Time stamp after the splicing stopped.
+If
+.Fl i Ar idle
+is set, end is the time of the final packet before idle timed out.
+.It start
+Time stamp after listen socket is bound.
+.It stop
+Time stamp before sockets are closed.
+.El
+.El
 .Sh SEE ALSO
 .Xr setsockopt 2 ,
 .Xr sosplice 9
