@@ -646,7 +646,11 @@ unsplice_cb(int from, short event, void *arg)
 	int error;
 
 	if (event & EV_TIMEOUT) {
+		int fd = -1;
+
 		has_timedout = 1;
+		if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &fd, sizeof(fd)) == -1)
+			err(1, "setsockopt SO_SPLICE unsplice");
 		/* fall through to print status line */
 	}
 
