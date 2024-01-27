@@ -1,5 +1,7 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
+1.04
+
 1.03 2024-01-27
   * When runing into timeout, unsplice the sockets.
   * Improve printing status line and explain it in man page.
