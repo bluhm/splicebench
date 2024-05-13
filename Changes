@@ -1,6 +1,9 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.04
+1.04 2024-05-13
+  * Use pkgconf to build on GNU/Linux.
+  * If splicing of datagram sockets fails with ENOBUFS error, splice
+    the sockets again when writing is possible.
 
 1.03 2024-01-27
   * When runing into timeout, unsplice the sockets.
