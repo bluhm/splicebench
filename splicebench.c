@@ -47,6 +47,7 @@ int has_timedout;
 struct ev_splice {
 	struct	event ev;
 	struct	timeval begin;
+	off_t	len;
 	int	sock;
 };
 
@@ -61,6 +62,7 @@ void	nameinfo_print(const char *, const char *, struct sockaddr_storage *,
 void	stream_splice(struct ev_splice *, int, int);
 void	dgram_splice(struct ev_splice *, int, int);
 void	unsplice_cb(int, short, void *);
+void	resplice_cb(int, short, void *);
 void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
 void	print_status(const char *, long long, const struct timeval *,
@@ -309,7 +311,7 @@ accepting_cb(int lsock, short event, void *arg)
 
 	csock = socket_connect_repeat();
 
-	if ((evs = malloc(sizeof(*evs))) == NULL)
+	if ((evs = calloc(1, sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
 
 	evs->sock = asock;
@@ -496,7 +498,7 @@ receiving_cb(int lsock, short event, void *arg)
 	if (out != in)
 		errx(1, "partial send %zd of %zd", out, in);
 
-	if ((evs = malloc(sizeof(*evs))) == NULL)
+	if ((evs = calloc(1, sizeof(*evs))) == NULL)
 		err(1, "malloc ev connect");
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
@@ -663,7 +665,6 @@ unsplice_cb(int from, short event, void *arg)
 	if (error == ETIMEDOUT) {
 		struct timeval timeo;
 
-		error = 0;
 		/* last data was seen before idle time */
 		timeo.tv_sec = idle;
 		timeo.tv_usec = 0;
@@ -672,6 +673,13 @@ unsplice_cb(int from, short event, void *arg)
 	len = sizeof(splicelen);
 	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) == -1)
 		err(1, "getsockopt SO_SPLICE");
+	splicelen += evs->len;
+	if (error == ENOBUFS) {
+		evs->len = splicelen;
+		evs->sock = from;
+		timeout_event(&evs->ev, to, EV_WRITE, resplice_cb, evs);
+		return;
+	}
 	print_status("splice", splicelen, &evs->begin, &end);
 	if (error && error != ETIMEDOUT) {
 		errno = error;
@@ -681,6 +689,42 @@ unsplice_cb(int from, short event, void *arg)
 	close(from);
 	close(to);
 	free(evs);
+}
+
+void
+resplice_cb(int to, short event, void *arg)
+{
+	struct ev_splice *evs = arg;
+	struct splice sp;
+	int from = evs->sock;
+
+	if (event & EV_TIMEOUT) {
+		struct timeval end;
+
+		if (gettimeofday(&end, NULL) == -1)
+			err(1, "gettimeofday end");
+		print_status("splice", evs->len, &evs->begin, &end);
+
+		close(from);
+		close(to);
+		free(evs);
+		return;
+	}
+
+	memset(&sp, 0, sizeof(sp));
+	sp.sp_fd = to;
+	sp.sp_idle.tv_sec = idle;
+
+	if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &sp, sizeof(sp)) == -1) {
+		if (errno == ENOBUFS) {
+			timeout_event(&evs->ev, to, EV_WRITE, resplice_cb, evs);
+			return;
+		}
+		err(1, "setsockopt SO_SPLICE");
+	}
+
+	evs->sock = to;
+	timeout_event(&evs->ev, from, EV_READ, unsplice_cb, evs);
 }
 #endif
 
