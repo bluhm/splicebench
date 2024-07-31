@@ -211,7 +211,7 @@ main(int argc, char *argv[])
 
 	event_dispatch();
 
-	if (idle && has_timedout)
+	if ((!udpmode || idle) && has_timedout)
 		errx(1, "stopped by timeout");
 
 	return 0;
