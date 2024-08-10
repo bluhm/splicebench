@@ -836,7 +836,7 @@ print_status(const char *action, long long datalen,
 	fflush(stdout);
 	printf("%s: payload %lld, "
 	    "begin %lld.%06ld, end %lld.%06ld, "
-	    "duration %lld.%06ld, bit/s %g, "
+	    "duration %lld.%06ld, bit/s %e, "
 	    "start %lld.%06ld, stop %lld.%06ld\n",
 	    action, datalen,
 	    (long long)begin->tv_sec, begin->tv_usec,
