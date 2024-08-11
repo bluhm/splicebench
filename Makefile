@@ -5,7 +5,7 @@ WARNINGS=	yes
 BINDIR?=	/usr/local/bin
 MANDIR?=	/usr/local/man/man
 
-VERSION=	1.05
+VERSION=	1.06
 CLEANFILES=	splicebench-${VERSION}.tar.gz*
 
 .PHONY: dist splicebench-${VERSION}.tar.gz
