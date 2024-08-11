@@ -1,6 +1,11 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.05
+1.05 2024-08-11
+  * If TCP splicing ends due to global timeout, exit with error
+    status.  TCP connections should be shutdown by client side, and
+    not aborted by socket splicing relay.
+  * Print bit per second in statistics with %e to get consistent
+    output and proper alignment.
 
 1.04 2024-05-13
   * Use pkgconf to build on GNU/Linux.
