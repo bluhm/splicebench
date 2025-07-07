@@ -85,15 +85,27 @@ If the port it omitted for
 .Ar listen
 or
 .Ar connect ,
-12345 is used.
+default tcpbench 12345 or iperf3 5201 port number is used.
 Port 0 for
 .Ar listen
 or
 .Ar bindout
 lets the kernel choose one.
-The unspecified address can be use to set the port or address family
-only.
-.\" .Sh EXAMPLES
+The unspecified address can be used to set the port or address
+family only.
+Remember that IPv6 addresses have to be enclosed in brackets.
+.Sh EXAMPLES
+Running tcpbench on four machines over splicebench
+.Dl tcpbench -s # on 192.168.2.41
+.Dl tcpbench -s # on 192.168.2.40
+.Dl splicebench -I -N2 10.0.1.20 192.168.2.40
+.Dl tcpbench 10.0.1.21
+.Dl tcpbench 10.0.1.20
+.Pp
+Running iperf3 over splicebench with 5 parallel connections
+.Dl iperf3 -X 192.168.2.4 -s
+.Dl splicebench -I -n5 10.0.1.2 192.168.2.4
+.Dl iperf3 -P5 -c 10.0.1.2
 .Sh DIAGNOSTICS
 .Bl -diag
 .It "splice: payload 573635832, begin 1706272738.460010, end 1706272752.032744, duration 13.572734, bit/s 3.38111e+08, start 1706272738.022382, stop 1706272752.032814"
