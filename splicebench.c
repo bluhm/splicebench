@@ -604,7 +604,7 @@ socket_connect_repeat(struct ev_accept *eva)
 			((uint8_t *)&sin6->sin6_addr.s6_addr)[15] += n;
 			break;
 		default:
-			errx(1, "foreign family %d", eva->foreign.ss_family);
+			errx(1, "foreign family %d", evar->foreign.ss_family);
 		}
 
 		timeout_event(&evar->ev, listensocks[n], EV_READ,
