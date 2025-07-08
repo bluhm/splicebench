@@ -44,6 +44,10 @@ uint16_t listensockport;
 struct timeval start, finish;
 int has_timedout;
 
+struct ev_accept {
+	struct	event ev;
+};
+
 struct ev_splice {
 	struct	event ev;
 	struct	timeval begin;
@@ -223,7 +227,6 @@ socket_listen(void)
 	struct addrinfo hints;
 	struct sockaddr_storage ss;
 	int lsock, n;
-	struct event *ev;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = listenfamily;
@@ -248,16 +251,20 @@ socket_listen(void)
 #endif
 
 	for (n = repeat; n >= 0; n--) {
+		struct ev_accept *eva;
 		const char *cause = NULL;
 		socklen_t sslen;
 
-		if ((ev = malloc(sizeof(*ev))) == NULL)
-			err(1, "malloc ev listen");
+		if ((eva = calloc(1, sizeof(*eva))) == NULL)
+			err(1, "calloc eva listen");
 
-		if (udpmode)
-			timeout_event(ev, lsock, EV_READ, receiving_cb, ev);
-		else
-			timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
+		if (udpmode) {
+			timeout_event(&eva->ev, lsock, EV_READ, receiving_cb,
+			    eva);
+		} else {
+			timeout_event(&eva->ev, lsock, EV_READ, accepting_cb,
+			    eva);
+		}
 
 		if (n <= 1)
 			break;
@@ -288,7 +295,7 @@ socket_listen(void)
 void
 accepting_cb(int lsock, short event, void *arg)
 {
-	struct event *ev = arg;
+	struct ev_accept *eva = arg;
 	struct sockaddr_storage ss;
 	socklen_t sslen;
 	static int n;
@@ -298,7 +305,7 @@ accepting_cb(int lsock, short event, void *arg)
 	if (event & EV_TIMEOUT) {
 		has_timedout = 1;
 		close(lsock);
-		free(ev);
+		free(eva);
 		return;
 	}
 
@@ -312,18 +319,18 @@ accepting_cb(int lsock, short event, void *arg)
 	csock = socket_connect_repeat();
 
 	if ((evs = calloc(1, sizeof(*evs))) == NULL)
-		err(1, "malloc ev connect");
+		err(1, "calloc evs connect");
 
 	evs->sock = asock;
 	timeout_event(&evs->ev, csock, EV_WRITE, connected_cb, evs);
 	if (multi > 1 && n != 1) {
-		timeout_event(ev, lsock, EV_READ, accepting_cb, ev);
+		timeout_event(&eva->ev, lsock, EV_READ, accepting_cb, eva);
 		if (n == 0)
 			n = multi;
 		n--;
 	} else {
 		close(lsock);
-		free(ev);
+		free(eva);
 	}
 }
 
@@ -358,7 +365,7 @@ connected_cb(int csock, short event, void *arg)
 void
 receiving_cb(int lsock, short event, void *arg)
 {
-	struct event *ev = arg;
+	struct ev_accept *eva = arg;
 	char buf[64*1024];
 	struct sockaddr_storage foreign, local, ss;
 	socklen_t foreignlen, locallen;
@@ -381,7 +388,7 @@ receiving_cb(int lsock, short event, void *arg)
 	if (event & EV_TIMEOUT) {
 		has_timedout = 1;
 		close(lsock);
-		free(ev);
+		free(eva);
 		return;
 	}
 
@@ -499,7 +506,7 @@ receiving_cb(int lsock, short event, void *arg)
 		errx(1, "partial send %zd of %zd", out, in);
 
 	if ((evs = calloc(1, sizeof(*evs))) == NULL)
-		err(1, "malloc ev connect");
+		err(1, "calloc evs connect");
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
@@ -510,7 +517,7 @@ receiving_cb(int lsock, short event, void *arg)
 		process_copy(evs, asock, csock);
 
 	close(lsock);
-	free(ev);
+	free(eva);
 }
 
 int
