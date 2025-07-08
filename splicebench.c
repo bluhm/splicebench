@@ -266,7 +266,7 @@ socket_listen(void)
 		return;
 
 	if ((listensocks = calloc(repeat, sizeof(int))) == NULL)
-		err(1, "calloc listenoscks");
+		err(1, "calloc listensocks");
 
 	listensocks[0] = lsock;
 	for (n = 1; n < repeat; n++) {
