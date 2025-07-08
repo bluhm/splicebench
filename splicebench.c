@@ -276,7 +276,6 @@ socket_listen(void)
 		switch (ss.ss_family) {
 			struct sockaddr_in *sin;
 			struct sockaddr_in6 *sin6;
-
 		case AF_INET:
 			sin = (struct sockaddr_in *)&ss;
 			((uint8_t *)&sin->sin_addr.s_addr)[3]++;
@@ -303,7 +302,6 @@ accepting_cb(int lsock, short event, void *arg)
 	struct ev_accept *eva = arg;
 	struct sockaddr_storage ss;
 	socklen_t sslen;
-	static int n;
 	int asock, csock;
 	struct ev_splice *evs;
 
@@ -328,11 +326,8 @@ accepting_cb(int lsock, short event, void *arg)
 
 	evs->sock = asock;
 	timeout_event(&evs->ev, csock, EV_WRITE, connected_cb, evs);
-	if (multi > 1 && n != 1) {
+	if (++eva->multi < multi) {
 		timeout_event(&eva->ev, lsock, EV_READ, accepting_cb, eva);
-		if (n == 0)
-			n = multi;
-		n--;
 	} else {
 		close(lsock);
 		free(eva);
@@ -534,15 +529,20 @@ socket_connect_repeat(struct ev_accept *eva)
 	if (eva->repeat > 0 || eva->multi > 0) {
 		struct sockaddr_storage local;
 		const char *cause = NULL;
-		int family;
 		socklen_t sslen;
 
-		family = eva->foreign.ss_family;
-		sslen = family == AF_INET ? sizeof(struct sockaddr_in) :
-		    family == AF_INET6 ? sizeof(struct sockaddr_in6) : 0;
+		switch (eva->foreign.ss_family) {
+		case AF_INET:
+			sslen = sizeof(struct sockaddr_in);
+			break;
+		case AF_INET6:
+			sslen = sizeof(struct sockaddr_in6);
+			break;
+		}
 
-		sock = socket_connect_unblock( family, eva->socktype,
-		    eva->protocol, (struct sockaddr *)&eva->local, sslen,
+		sock = socket_connect_unblock(eva->foreign.ss_family,
+		    eva->socktype, eva->protocol,
+		    (struct sockaddr *)&eva->local, sslen,
 		    (struct sockaddr *)&eva->foreign, sslen, &cause);
 		if (sock == -1)
 			err(1, "%s, repeat %d, multi %d", cause,
@@ -561,6 +561,19 @@ socket_connect_repeat(struct ev_accept *eva)
 	    bindouthost, bindoutport, &hints, &eva->foreign);
 	localinfo_print("connect", sock, &eva->local);
 
+	switch (eva->local.ss_family) {
+		struct sockaddr_in *sin;
+		struct sockaddr_in6 *sin6;
+	case AF_INET:
+		sin = (struct sockaddr_in *)&eva->local;
+		sin->sin_port = 0;
+		break;
+	case AF_INET6:
+		sin6 = (struct sockaddr_in6 *)&eva->local;
+		sin6->sin6_port = 0;
+		break;
+	}
+
 	if (!repeat)
 		return sock;
 
@@ -574,20 +587,15 @@ socket_connect_repeat(struct ev_accept *eva)
 		evar->repeat = n;
 
 		switch (evar->foreign.ss_family) {
-			struct sockaddr_in *fsin, *lsin;
-			struct sockaddr_in6 *fsin6, *lsin6;
-
+			struct sockaddr_in *sin;
+			struct sockaddr_in6 *sin6;
 		case AF_INET:
-			fsin = (struct sockaddr_in *)&evar->foreign;
-			lsin = (struct sockaddr_in *)&evar->local;
-			((uint8_t *)&fsin->sin_addr.s_addr)[3] += n;
-			lsin->sin_port = 0;
+			sin = (struct sockaddr_in *)&evar->foreign;
+			((uint8_t *)&sin->sin_addr.s_addr)[3] += n;
 			break;
 		case AF_INET6:
-			fsin6 = (struct sockaddr_in6 *)&evar->foreign;
-			lsin6 = (struct sockaddr_in6 *)&evar->local;
-			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15] += n;
-			lsin6->sin6_port = 0;
+			sin6 = (struct sockaddr_in6 *)&evar->foreign;
+			((uint8_t *)&sin6->sin6_addr.s6_addr)[15] += n;
 			break;
 		}
 
@@ -1080,7 +1088,7 @@ socket_bind_listen(int family, int socktype, int protocol,
 		return -1;
 	}
 	if (socktype == SOCK_STREAM) {
-		if (listen(sock, 1) == -1)
+		if (listen(sock, multi + 1) == -1)
 			err(1, "listen");
 	}
 	return sock;
