@@ -41,11 +41,18 @@ int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
 #endif
+int *listensocks;
 struct timeval start, finish;
 int has_timedout;
 
 struct ev_accept {
 	struct	event ev;
+	struct	sockaddr_storage foreign;
+	struct	sockaddr_storage local;
+	int	socktype;
+	int	protocol;
+	int	multi;
+	int	repeat;
 };
 
 struct ev_splice {
@@ -71,7 +78,7 @@ void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
 void	print_status(const char *, long long, const struct timeval *,
 	    const struct timeval *);
-int	socket_connect_repeat(void);
+int	socket_connect_repeat(struct ev_accept *);
 int	socket_connect(const char *, const char *, const char *, const char *,
 	    const struct addrinfo *, struct sockaddr_storage *);
 int	socket_bind_connect(const struct addrinfo *, const char *,
@@ -227,12 +234,18 @@ socket_listen(void)
 {
 	struct addrinfo hints;
 	struct sockaddr_storage ss;
+	struct ev_accept *eva;
 	int lsock, n;
+
+	if ((eva = calloc(1, sizeof(*eva))) == NULL)
+		err(1, "calloc eva listen");
+	eva->socktype = udpmode ? SOCK_DGRAM : SOCK_STREAM;
+	eva->protocol = udpmode ? IPPROTO_UDP : IPPROTO_TCP;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = listenfamily;
-	hints.ai_socktype = udpmode ? SOCK_DGRAM : SOCK_STREAM;
-	hints.ai_protocol = udpmode ? IPPROTO_UDP: IPPROTO_TCP;
+	hints.ai_socktype = eva->socktype;
+	hints.ai_protocol = eva->protocol;
 	hints.ai_flags = AI_PASSIVE;
 
 	lsock = socket_bind(listenhost, listenport, &hints, &ss);
@@ -246,19 +259,19 @@ socket_listen(void)
 		listensockport = ((struct sockaddr_in6 *)(&ss))->sin6_port;
 #endif
 
-	for (n = repeat; n >= 0; n--) {
-		struct ev_accept *eva;
+	timeout_event(&eva->ev, lsock, EV_READ,
+	    udpmode ? receiving_cb : accepting_cb, eva);
+
+	if (!repeat)
+		return;
+
+	if ((listensocks = calloc(repeat, sizeof(int))) == NULL)
+		err(1, "calloc listenoscks");
+
+	listensocks[0] = lsock;
+	for (n = 1; n < repeat; n++) {
 		const char *cause = NULL;
 		socklen_t sslen;
-
-		if ((eva = calloc(1, sizeof(*eva))) == NULL)
-			err(1, "calloc eva listen");
-
-		timeout_event(&eva->ev, lsock, EV_READ,
-		    udpmode ? receiving_cb : accepting_cb, eva);
-
-		if (n <= 1)
-			break;
 
 		switch (ss.ss_family) {
 			struct sockaddr_in *sin;
@@ -278,8 +291,9 @@ socket_listen(void)
 		lsock = socket_bind_listen(ss.ss_family, hints.ai_socktype,
 		    hints.ai_protocol, (struct sockaddr *)&ss, sslen, &cause);
 		if (lsock == -1)
-			err(1, "%s %d", cause, n - 1);
+			err(1, "%s, repeat %d", cause, n);
 		localinfo_print("listen", lsock, &ss);
+		listensocks[n] = lsock;
 	}
 }
 
@@ -307,7 +321,7 @@ accepting_cb(int lsock, short event, void *arg)
 	nameinfo_print("accept", "peer", &ss, sslen);
 	localinfo_print("accept", asock, &ss);
 
-	csock = socket_connect_repeat();
+	csock = socket_connect_repeat(eva);
 
 	if ((evs = calloc(1, sizeof(*evs))) == NULL)
 		err(1, "calloc evs connect");
@@ -487,7 +501,7 @@ receiving_cb(int lsock, short event, void *arg)
 	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) == -1)
 		err(1, "connect");
 
-	csock = socket_connect_repeat();
+	csock = socket_connect_repeat(eva);
 	foreigninfo_print("connect", csock, &ss);
 
 	out = send(csock, buf, in, 0);
@@ -512,54 +526,75 @@ receiving_cb(int lsock, short event, void *arg)
 }
 
 int
-socket_connect_repeat(void)
+socket_connect_repeat(struct ev_accept *eva)
 {
 	struct addrinfo hints;
-	static struct sockaddr_storage foreign, local;
-	static int n;
-	int sock;
+	int n, sock;
+
+	if (eva->repeat > 0 || eva->multi > 0) {
+		struct sockaddr_storage local;
+		const char *cause = NULL;
+		int family;
+		socklen_t sslen;
+
+		family = eva->foreign.ss_family;
+		sslen = family == AF_INET ? sizeof(struct sockaddr_in) :
+		    family == AF_INET6 ? sizeof(struct sockaddr_in6) : 0;
+
+		sock = socket_connect_unblock( family, eva->socktype,
+		    eva->protocol, (struct sockaddr *)&eva->local, sslen,
+		    (struct sockaddr *)&eva->foreign, sslen, &cause);
+		if (sock == -1)
+			err(1, "%s, repeat %d, multi %d", cause,
+			    eva->repeat, eva->multi);
+		localinfo_print("connect", sock, &local);
+
+		return sock;
+	}
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = udpmode ? SOCK_DGRAM : SOCK_STREAM;
-	hints.ai_protocol = udpmode ? IPPROTO_UDP: IPPROTO_TCP;
+	hints.ai_socktype = eva->socktype;
+	hints.ai_protocol = eva->protocol;
 
-	if (!repeat || n <= 0) {
-		sock = socket_connect(connecthost, connectport,
-		    bindouthost, bindoutport, &hints, &foreign);
-		n = repeat;
-	} else {
-		const char *cause = NULL;
-		socklen_t sslen;
+	sock = socket_connect(connecthost, connectport,
+	    bindouthost, bindoutport, &hints, &eva->foreign);
+	localinfo_print("connect", sock, &eva->local);
 
-		switch (local.ss_family) {
+	if (!repeat)
+		return sock;
+
+	for (n = 1; n < repeat; n++) {
+		struct ev_accept *evar;
+
+		/* old eva is reused for multi, allocate new for repeat */
+		if ((evar = malloc(sizeof(*evar))) == NULL)
+			err(1, "malloc evar");
+		*evar = *eva;
+		evar->repeat = n;
+
+		switch (evar->foreign.ss_family) {
 			struct sockaddr_in *fsin, *lsin;
 			struct sockaddr_in6 *fsin6, *lsin6;
 
 		case AF_INET:
-			fsin = (struct sockaddr_in *)&foreign;
-			lsin = (struct sockaddr_in *)&local;
-			((uint8_t *)&fsin->sin_addr.s_addr)[3]++;
+			fsin = (struct sockaddr_in *)&evar->foreign;
+			lsin = (struct sockaddr_in *)&evar->local;
+			((uint8_t *)&fsin->sin_addr.s_addr)[3] += n;
 			lsin->sin_port = 0;
-			sslen = sizeof(struct sockaddr_in);
 			break;
 		case AF_INET6:
-			fsin6 = (struct sockaddr_in6 *)&foreign;
-			lsin6 = (struct sockaddr_in6 *)&local;
-			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15]++;
+			fsin6 = (struct sockaddr_in6 *)&evar->foreign;
+			lsin6 = (struct sockaddr_in6 *)&evar->local;
+			((uint8_t *)&fsin6->sin6_addr.s6_addr)[15] += n;
 			lsin6->sin6_port = 0;
-			sslen = sizeof(struct sockaddr_in6);
 			break;
 		}
-		sock = socket_connect_unblock(local.ss_family,
-		    hints.ai_socktype, hints.ai_protocol,
-		    (struct sockaddr *)&local, sslen,
-		    (struct sockaddr *)&foreign, sslen, &cause);
-		if (sock == -1)
-			err(1, "%s %d", cause, n - 1);
-		n--;
+
+		timeout_event(&evar->ev, listensocks[n], EV_READ,
+		    udpmode ? receiving_cb : accepting_cb, evar);
 	}
-	localinfo_print("connect", sock, &local);
+	free(listensocks);
 
 	return sock;
 }
