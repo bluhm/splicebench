@@ -230,13 +230,8 @@ socket_listen(void)
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = listenfamily;
-	if (udpmode) {
-		hints.ai_socktype = SOCK_DGRAM;
-		hints.ai_protocol = IPPROTO_UDP;
-	} else {
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_protocol = IPPROTO_TCP;
-	}
+	hints.ai_socktype = udpmode ? SOCK_DGRAM : SOCK_STREAM;
+	hints.ai_protocol = udpmode ? IPPROTO_UDP: IPPROTO_TCP;
 	hints.ai_flags = AI_PASSIVE;
 
 	lsock = socket_bind(listenhost, listenport, &hints);
@@ -258,13 +253,8 @@ socket_listen(void)
 		if ((eva = calloc(1, sizeof(*eva))) == NULL)
 			err(1, "calloc eva listen");
 
-		if (udpmode) {
-			timeout_event(&eva->ev, lsock, EV_READ, receiving_cb,
-			    eva);
-		} else {
-			timeout_event(&eva->ev, lsock, EV_READ, accepting_cb,
-			    eva);
-		}
+		timeout_event(&eva->ev, lsock, EV_READ,
+		    udpmode ? receiving_cb : accepting_cb, eva);
 
 		if (n <= 1)
 			break;
@@ -530,13 +520,8 @@ socket_connect_repeat(void)
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	if (udpmode) {
-		hints.ai_socktype = SOCK_DGRAM;
-		hints.ai_protocol = IPPROTO_UDP;
-	} else {
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_protocol = IPPROTO_TCP;
-	}
+	hints.ai_socktype = udpmode ? SOCK_DGRAM : SOCK_STREAM;
+	hints.ai_protocol = udpmode ? IPPROTO_UDP: IPPROTO_TCP;
 
 	if (!repeat || n <= 0) {
 		sock = socket_connect(connecthost, connectport,
