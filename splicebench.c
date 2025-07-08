@@ -73,13 +73,13 @@ void	print_status(const char *, long long, const struct timeval *,
 	    const struct timeval *);
 int	socket_connect_repeat(void);
 int	socket_connect(const char *, const char *, const char *, const char *,
-	    struct addrinfo *);
-int	socket_bind_connect(struct addrinfo *, const char *,
-	    const char *, struct addrinfo *, const char **);
+	    const struct addrinfo *, struct sockaddr_storage *);
+int	socket_bind_connect(const struct addrinfo *, const char *,
+	    const char *, struct sockaddr_storage *, const char **);
 int	socket_connect_unblock(int, int, int, const struct sockaddr *,
 	    socklen_t, const struct sockaddr *, socklen_t, const char **);
-int	socket_bind(const char *, const char *, struct addrinfo *);
-int	socket_bind_listen(int, int, int, struct sockaddr *, socklen_t,
+int	socket_bind(const char *, const char *, const struct addrinfo *);
+int	socket_bind_listen(int, int, int, const struct sockaddr *, socklen_t,
 	    const char **);
 void	address_parse(const char *, char **, char **);
 void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
@@ -525,8 +525,7 @@ socket_connect_repeat(void)
 
 	if (!repeat || n <= 0) {
 		sock = socket_connect(connecthost, connectport,
-		    bindouthost, bindoutport, &hints);
-		memcpy(&foreign, hints.ai_addr, hints.ai_addrlen);
+		    bindouthost, bindoutport, &hints, &foreign);
 		n = repeat;
 	} else {
 		const char *cause = NULL;
@@ -842,10 +841,9 @@ print_status(const char *action, long long datalen,
 int
 socket_connect(const char *host, const char *serv,
     const char *bindhost, const char *bindserv,
-    struct addrinfo *hints)
+    const struct addrinfo *hints, struct sockaddr_storage *ss)
 {
 	struct addrinfo *res, *res0;
-	static struct sockaddr_storage ss;
 	int error, sock;
 	const char *cause = NULL;
 
@@ -858,13 +856,10 @@ socket_connect(const char *host, const char *serv,
 			sock = socket_connect_unblock(res->ai_family,
 			    res->ai_socktype, res->ai_protocol, NULL, 0,
 			    res->ai_addr, res->ai_addrlen, &cause);
-			hints->ai_family = res->ai_family;
-			memcpy(&ss, res->ai_addr, res->ai_addrlen);
-			hints->ai_addr = (struct sockaddr *)&ss;
-			hints->ai_addrlen = res->ai_addrlen;
+			memcpy(ss, res->ai_addr, res->ai_addrlen);
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindserv,
-			    hints, &cause);
+			    ss, &cause);
 		}
 		if (sock == -1)
 			continue;
@@ -886,19 +881,20 @@ socket_connect(const char *host, const char *serv,
 }
 
 int
-socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
-    struct addrinfo *hints, const char **cause)
+socket_bind_connect(const struct addrinfo *res,
+    const char *host, const char *serv,
+    struct sockaddr_storage *ss, const char **cause)
 {
-	struct addrinfo *bindres, *bindres0;
-	static struct sockaddr_storage ss;
+	struct addrinfo hints, *bindres, *bindres0;
 	int error, sock;
 
-	hints->ai_family = res->ai_family;
-	hints->ai_socktype = res->ai_socktype;
-	hints->ai_protocol = res->ai_protocol;
-	hints->ai_flags = AI_PASSIVE;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = res->ai_family;
+	hints.ai_socktype = res->ai_socktype;
+	hints.ai_protocol = res->ai_protocol;
+	hints.ai_flags = AI_PASSIVE;
 
-	error = getaddrinfo(host, serv, hints, &bindres0);
+	error = getaddrinfo(host, serv, &hints, &bindres0);
 	if (error) {
 		errx(1, "getaddrinfo %s%s%s: %s", host ? host : "",
 		    (host && serv) ? " " : "", serv ? serv : "",
@@ -912,10 +908,7 @@ socket_bind_connect(struct addrinfo *res, const char *host, const char *serv,
 		    res->ai_addr, res->ai_addrlen, cause);
 		if (sock == -1)
 			continue;
-		hints->ai_family = res->ai_family;
-		memcpy(&ss, res->ai_addr, res->ai_addrlen);
-		hints->ai_addr = (struct sockaddr *)&ss;
-		hints->ai_addrlen = res->ai_addrlen;
+		memcpy(ss, res->ai_addr, res->ai_addrlen);
 
 		break;  /* okay we got one */
 	}
@@ -962,10 +955,9 @@ socket_connect_unblock(int family, int socktype, int protocol,
 }
 
 int
-socket_bind(const char *host, const char *serv, struct addrinfo *hints)
+socket_bind(const char *host, const char *serv, const struct addrinfo *hints)
 {
 	struct addrinfo *res, *res0;
-	static struct sockaddr_storage ss;
 	int error, sock;
 	const char *cause = NULL;
 
@@ -981,10 +973,6 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 		    res->ai_protocol, res->ai_addr, res->ai_addrlen, &cause);
 		if (sock == -1)
 			continue;
-		hints->ai_family = res->ai_family;
-		memcpy(&ss, res->ai_addr, res->ai_addrlen);
-		hints->ai_addr = (struct sockaddr *)&ss;
-		hints->ai_addrlen = res->ai_addrlen;
 
 		break;  /* okay we got one */
 	}
@@ -998,7 +986,7 @@ socket_bind(const char *host, const char *serv, struct addrinfo *hints)
 
 int
 socket_bind_listen(int family, int socktype, int protocol,
-    struct sockaddr *sa, socklen_t salen, const char **cause)
+    const struct sockaddr *sa, socklen_t salen, const char **cause)
 {
 	int sock, optval, save_errno;
 
