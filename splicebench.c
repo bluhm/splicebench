@@ -38,9 +38,6 @@ char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 int buffersize, multi, repeat, splicemode = 1, udpmode;
 int idle = 1, timeout = 1;
-#ifndef __OpenBSD__
-uint16_t listensockport;
-#endif
 struct timeval start, finish;
 int has_timedout;
 
@@ -228,6 +225,9 @@ socket_listen(void)
 	struct addrinfo hints;
 	struct sockaddr_storage ss;
 	int lsock, n;
+#ifndef __OpenBSD__
+	uint16_t listensockport;
+#endif
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = listenfamily;
