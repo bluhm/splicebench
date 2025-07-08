@@ -286,6 +286,8 @@ socket_listen(void)
 			((uint8_t *)&sin6->sin6_addr.s6_addr)[15]++;
 			sslen = sizeof(struct sockaddr_in6);
 			break;
+		default:
+			errx(1, "listen family %d", ss.ss_family);
 		}
 		lsock = socket_bind_listen(ss.ss_family, hints.ai_socktype,
 		    hints.ai_protocol, (struct sockaddr *)&ss, sslen, &cause);
@@ -538,6 +540,8 @@ socket_connect_repeat(struct ev_accept *eva)
 		case AF_INET6:
 			sslen = sizeof(struct sockaddr_in6);
 			break;
+		default:
+			errx(1, "connect family %d", eva->foreign.ss_family);
 		}
 
 		sock = socket_connect_unblock(eva->foreign.ss_family,
@@ -572,6 +576,8 @@ socket_connect_repeat(struct ev_accept *eva)
 		sin6 = (struct sockaddr_in6 *)&eva->local;
 		sin6->sin6_port = 0;
 		break;
+	default:
+		errx(1, "local family %d", eva->local.ss_family);
 	}
 
 	if (!repeat)
@@ -597,6 +603,8 @@ socket_connect_repeat(struct ev_accept *eva)
 			sin6 = (struct sockaddr_in6 *)&evar->foreign;
 			((uint8_t *)&sin6->sin6_addr.s6_addr)[15] += n;
 			break;
+		default:
+			errx(1, "foreign family %d", eva->foreign.ss_family);
 		}
 
 		timeout_event(&evar->ev, listensocks[n], EV_READ,
