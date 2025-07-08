@@ -78,7 +78,8 @@ int	socket_bind_connect(const struct addrinfo *, const char *,
 	    const char *, struct sockaddr_storage *, const char **);
 int	socket_connect_unblock(int, int, int, const struct sockaddr *,
 	    socklen_t, const struct sockaddr *, socklen_t, const char **);
-int	socket_bind(const char *, const char *, const struct addrinfo *);
+int	socket_bind(const char *, const char *, const struct addrinfo *,
+	    struct sockaddr_storage *);
 int	socket_bind_listen(int, int, int, const struct sockaddr *, socklen_t,
 	    const char **);
 void	address_parse(const char *, char **, char **);
@@ -234,7 +235,7 @@ socket_listen(void)
 	hints.ai_protocol = udpmode ? IPPROTO_UDP: IPPROTO_TCP;
 	hints.ai_flags = AI_PASSIVE;
 
-	lsock = socket_bind(listenhost, listenport, &hints);
+	lsock = socket_bind(listenhost, listenport, &hints, &ss);
 	if (gettimeofday(&start, NULL) == -1)
 		err(1, "gettimeofday start");
 	localinfo_print("listen", lsock, &ss);
@@ -856,13 +857,14 @@ socket_connect(const char *host, const char *serv,
 			sock = socket_connect_unblock(res->ai_family,
 			    res->ai_socktype, res->ai_protocol, NULL, 0,
 			    res->ai_addr, res->ai_addrlen, &cause);
-			memcpy(ss, res->ai_addr, res->ai_addrlen);
 		} else {
 			sock = socket_bind_connect(res, bindhost, bindserv,
 			    ss, &cause);
 		}
 		if (sock == -1)
 			continue;
+		if (bindhost == NULL && bindserv == NULL)
+			memcpy(ss, res->ai_addr, res->ai_addrlen);
 
 		break;  /* okay we got one */
 	}
@@ -955,7 +957,8 @@ socket_connect_unblock(int family, int socktype, int protocol,
 }
 
 int
-socket_bind(const char *host, const char *serv, const struct addrinfo *hints)
+socket_bind(const char *host, const char *serv, const struct addrinfo *hints,
+    struct sockaddr_storage *ss)
 {
 	struct addrinfo *res, *res0;
 	int error, sock;
@@ -973,6 +976,7 @@ socket_bind(const char *host, const char *serv, const struct addrinfo *hints)
 		    res->ai_protocol, res->ai_addr, res->ai_addrlen, &cause);
 		if (sock == -1)
 			continue;
+		memcpy(ss, res->ai_addr, res->ai_addrlen);
 
 		break;  /* okay we got one */
 	}
