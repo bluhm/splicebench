@@ -37,7 +37,7 @@ int listenfamily = AF_UNSPEC;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
 int buffersize, iperf3, multi, repeat, splicemode = 1, udpmode;
-int idle = 1, timeout = 1;
+int idle = 1, timeout = 10;
 #ifndef __OpenBSD__
 uint16_t listensockport;
 #endif
@@ -109,7 +109,7 @@ usage(void)
 	    "    -i idle        idle timeout before splicing stops, default 1\n"
 	    "    -N repeat      run parallel splices with incremented address\n"
 	    "    -n multi       run parallel splices multiple TCP accepts\n"
-	    "    -t timeout     global splice timeout, default 1\n"
+	    "    -t timeout     global splice timeout, default 10\n"
 	    "    -u             splice UDP instead of TCP\n"
 	    );
 	exit(2);
@@ -218,9 +218,6 @@ main(int argc, char *argv[])
 	if (iperf3) {
 		if (udpmode)
 			errx(1, "iperf3 with UDP not supported");
-		if (timeout != 0 && timeout != 1)
-			errx(1, "iperf3 must use timeout 0");
-		timeout = 0;
 	}
 	if (timeout) {
 		if (gettimeofday(&finish, NULL) == -1)
@@ -663,6 +660,15 @@ socket_connect_repeat(const char *name, struct ev_accept *eva)
 		errx(1, "local family %d", eva->local.ss_family);
 	}
 
+	if (timeout) {
+		/* after first accept, restart timeout */
+		if (gettimeofday(&finish, NULL) == -1)
+			err(1, "gettimeofday finish");
+		finish.tv_sec += timeout + 1;
+		if (udpmode)
+			finish.tv_sec += idle;
+	}
+
 	if (!repeat)
 		return sock;
 
@@ -778,8 +784,9 @@ unsplice_cb(int from, short event, void *arg)
 		int fd = -1;
 
 		has_timedout = 1;
+		/* ignore error, maybe one side has already closed */
 		if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &fd, sizeof(fd))
-		    == -1)
+		    == -1 && errno != EPROTO)
 			err(1, "setsockopt SO_SPLICE unsplice");
 		/* fall through to print status line */
 	}
