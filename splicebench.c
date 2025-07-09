@@ -97,7 +97,7 @@ static void
 usage(void)
 {
 	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-i idle] "
-	    "[-N repeat] [-n multi] [-t timeout] [listen] [bindout] connect\n"
+	    "[-N repeat] [-n multi] [-t timeout] [listen [bindout]] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
