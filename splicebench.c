@@ -406,9 +406,6 @@ connected_cb(int csock, short event, void *arg)
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
-	/* to allow iperf3 communication, also splice in reverse direction */
-	if (setsockopt(csock, SOL_SOCKET, SO_SPLICE, &asock, sizeof(int)) == -1)
-		err(1, "setsockopt SO_SPLICE reverse");
 	if (splicemode)
 		stream_splice(evs, asock, csock);
 	else
