@@ -36,7 +36,7 @@
 int listenfamily = AF_UNSPEC;
 char *listenhost, *bindouthost, *connecthost;
 char *listenport, *bindoutport, *connectport;
-int buffersize, multi, repeat, splicemode = 1, udpmode;
+int buffersize, iperf3, multi, repeat, splicemode = 1, udpmode;
 int idle = 1, timeout = 1;
 #ifndef __OpenBSD__
 uint16_t listensockport;
@@ -64,7 +64,9 @@ struct ev_splice {
 
 void	socket_listen(void);
 void	accepting_cb(int, short, void *);
+void	iperf3_accepting_cb(int, short, void *);
 void	connected_cb(int, short, void *);
+void	iperf3_connected_cb(int, short, void *);
 void	receiving_cb(int, short, void *);
 void	foreigninfo_print(const char *, int, struct sockaddr_storage *);
 void	localinfo_print(const char *, int, struct sockaddr_storage *);
@@ -73,12 +75,13 @@ void	nameinfo_print(const char *, const char *, struct sockaddr_storage *,
 void	stream_splice(struct ev_splice *, int, int);
 void	dgram_splice(struct ev_splice *, int, int);
 void	unsplice_cb(int, short, void *);
+void	iperf3_unsplice_cb(int, short, void *);
 void	resplice_cb(int, short, void *);
 void	process_copy(struct ev_splice *, int, int);
 void	waitpid_cb(int, short, void *);
 void	print_status(const char *, long long, const struct timeval *,
 	    const struct timeval *);
-int	socket_connect_repeat(struct ev_accept *);
+int	socket_connect_repeat(const char *, struct ev_accept *);
 int	socket_connect(const char *, const char *, const char *, const char *,
 	    const struct addrinfo *, struct sockaddr_storage *);
 int	socket_bind_connect(const struct addrinfo *, const char *,
@@ -96,12 +99,13 @@ void	timeout_event(struct event *, int, short, void (*)(int, short, void *),
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: splicebench [-46cu] [-b bufsize] [-i idle] "
+	fprintf(stderr, "usage: splicebench [-46cIu] [-b bufsize] [-i idle] "
 	    "[-N repeat] [-n multi] [-t timeout] [listen [bindout]] connect\n"
 	    "    -4             listen on IPv4\n"
 	    "    -6             listen on IPv6\n"
 	    "    -b bufsize     set size of send or receive buffer\n"
 	    "    -c             copy instead of splice\n"
+	    "    -I             setup connections suitable for iperf3\n"
 	    "    -i idle        idle timeout before splicing stops, default 1\n"
 	    "    -N repeat      run parallel splices with incremented address\n"
 	    "    -n multi       run parallel splices multiple TCP accepts\n"
@@ -120,7 +124,7 @@ main(int argc, char *argv[])
 	if (setvbuf(stdout, NULL, _IOLBF, 0) != 0)
 		err(1, "setvbuf");
 
-	while ((ch = getopt(argc, argv, "46b:ci:N:n:t:u")) != -1) {
+	while ((ch = getopt(argc, argv, "46b:cIi:N:n:t:u")) != -1) {
 		switch (ch) {
 		case '4':
 			listenfamily = AF_INET;
@@ -136,6 +140,9 @@ main(int argc, char *argv[])
 			break;
 		case 'c':
 			splicemode = 0;
+			break;
+		case 'I':
+			iperf3 = 1;
 			break;
 		case 'i':
 			idle = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -182,6 +189,8 @@ main(int argc, char *argv[])
 #else
 	if (splicemode)
 		errx(1, "splice mode only supported on OpenBSD");
+	if (iperf3)
+		errx(1, "iperf3 only supported on OpenBSD");
 #endif
 	listenhost = bindouthost = connecthost = NULL;
 	listenport = bindoutport = connectport = NULL;
@@ -202,10 +211,17 @@ main(int argc, char *argv[])
 		usage();
 	}
 	if (listenport == NULL)
-		listenport = "12345";
+		listenport = iperf3 ? "5201" : "12345";
 	if (connectport == NULL)
-		connectport = "12345";
+		connectport = iperf3 ? "5201" : "12345";
 
+	if (iperf3) {
+		if (udpmode)
+			errx(1, "iperf3 with UDP not supported");
+		if (timeout != 0 && timeout != 1)
+			errx(1, "iperf3 must use timeout 0");
+		timeout = 0;
+	}
 	if (timeout) {
 		if (gettimeofday(&finish, NULL) == -1)
 			err(1, "gettimeofday finish");
@@ -259,7 +275,7 @@ socket_listen(void)
 		listensockport = ((struct sockaddr_in6 *)(&ss))->sin6_port;
 #endif
 
-	timeout_event(&eva->ev, lsock, EV_READ,
+	timeout_event(&eva->ev, lsock, EV_READ, iperf3 ? iperf3_accepting_cb :
 	    udpmode ? receiving_cb : accepting_cb, eva);
 
 	if (!repeat)
@@ -321,19 +337,53 @@ accepting_cb(int lsock, short event, void *arg)
 	nameinfo_print("accept", "peer", &ss, sslen);
 	localinfo_print("accept", asock, &ss);
 
-	csock = socket_connect_repeat(eva);
+	csock = socket_connect_repeat("connect", eva);
 
 	if ((evs = calloc(1, sizeof(*evs))) == NULL)
 		err(1, "calloc evs connect");
 
 	evs->sock = asock;
 	timeout_event(&evs->ev, csock, EV_WRITE, connected_cb, evs);
-	if (++eva->multi < multi) {
+	if (++eva->multi < multi + iperf3) {
 		timeout_event(&eva->ev, lsock, EV_READ, accepting_cb, eva);
 	} else {
 		close(lsock);
 		free(eva);
 	}
+}
+
+void
+iperf3_accepting_cb(int lsock, short event, void *arg)
+{
+	struct ev_accept *eva = arg;
+	struct sockaddr_storage ss;
+	socklen_t sslen;
+	int asock, csock;
+	struct ev_splice *evs;
+
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		close(lsock);
+		free(eva);
+		return;
+	}
+
+	sslen = sizeof(ss);
+	asock = accept(lsock, (struct sockaddr *)&ss, &sslen);
+	if (asock == -1)
+		err(1, "accept iperf3");
+	nameinfo_print("accept iperf3", "peer", &ss, sslen);
+	localinfo_print("accept iperf3", asock, &ss);
+
+	csock = socket_connect_repeat("connect iperf3", eva);
+
+	if ((evs = calloc(1, sizeof(*evs))) == NULL)
+		err(1, "calloc evs connect iperf3");
+
+	evs->sock = asock;
+	timeout_event(&evs->ev, csock, EV_WRITE, iperf3_connected_cb, evs);
+	eva->multi = 1;
+	timeout_event(&eva->ev, lsock, EV_READ, accepting_cb, eva);
 }
 
 void
@@ -356,6 +406,9 @@ connected_cb(int csock, short event, void *arg)
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
+	/* to allow iperf3 communication, also splice in reverse direction */
+	if (setsockopt(csock, SOL_SOCKET, SO_SPLICE, &asock, sizeof(int)) == -1)
+		err(1, "setsockopt SO_SPLICE reverse");
 	if (splicemode)
 		stream_splice(evs, asock, csock);
 	else
@@ -363,6 +416,36 @@ connected_cb(int csock, short event, void *arg)
 		process_copy(evs, asock, csock);
 }
 
+void
+iperf3_connected_cb(int csock, short event, void *arg)
+{
+	struct ev_splice *evs = arg;
+	int asock = evs->sock;
+	struct sockaddr_storage ss;
+
+	if (event & EV_TIMEOUT) {
+		has_timedout = 1;
+		close(asock);
+		close(csock);
+		free(evs);
+		return;
+	}
+
+	foreigninfo_print("connect iperf3", csock, &ss);
+
+	if (gettimeofday(&evs->begin, NULL) == -1)
+		err(1, "gettimeofday begin iperf3");
+#ifdef __OpenBSD__
+	if (setsockopt(asock, SOL_SOCKET, SO_SPLICE, &csock, sizeof(int)) == -1)
+		err(1, "setsockopt SO_SPLICE iperf3");
+	/* to allow iperf3 communication, also splice in reverse direction */
+	if (setsockopt(csock, SOL_SOCKET, SO_SPLICE, &asock, sizeof(int)) == -1)
+		err(1, "setsockopt SO_SPLICE iperf3 reverse");
+
+	evs->sock = csock;
+	timeout_event(&evs->ev, asock, EV_READ, iperf3_unsplice_cb, evs);
+#endif
+}
 
 void
 receiving_cb(int lsock, short event, void *arg)
@@ -498,7 +581,7 @@ receiving_cb(int lsock, short event, void *arg)
 	if (connect(asock, (struct sockaddr *)&foreign, foreignlen) == -1)
 		err(1, "connect");
 
-	csock = socket_connect_repeat(eva);
+	csock = socket_connect_repeat("connect", eva);
 	foreigninfo_print("connect", csock, &ss);
 
 	out = send(csock, buf, in, 0);
@@ -512,6 +595,9 @@ receiving_cb(int lsock, short event, void *arg)
 	if (gettimeofday(&evs->begin, NULL) == -1)
 		err(1, "gettimeofday begin");
 #ifdef __OpenBSD__
+	/* to allow iperf3 communication, also splice in reverse direction */
+	if (setsockopt(csock, SOL_SOCKET, SO_SPLICE, &asock, sizeof(int)) == -1)
+		err(1, "setsockopt SO_SPLICE reverse");
 	if (splicemode)
 		dgram_splice(evs, asock, csock);
 	else
@@ -523,7 +609,7 @@ receiving_cb(int lsock, short event, void *arg)
 }
 
 int
-socket_connect_repeat(struct ev_accept *eva)
+socket_connect_repeat(const char *name, struct ev_accept *eva)
 {
 	struct addrinfo hints;
 	int n, sock;
@@ -608,6 +694,7 @@ socket_connect_repeat(struct ev_accept *eva)
 		}
 
 		timeout_event(&evar->ev, listensocks[n], EV_READ,
+		    iperf3 ? iperf3_accepting_cb :
 		    udpmode ? receiving_cb : accepting_cb, evar);
 	}
 	free(listensocks);
@@ -724,7 +811,9 @@ unsplice_cb(int from, short event, void *arg)
 		return;
 	}
 	print_status("splice", splicelen, &evs->begin, &end);
-	if (error && error != ETIMEDOUT) {
+	if (iperf3 && (error == EPIPE || error == ECONNRESET)) {
+		/* ignore error, iperf3 server closes data connection */
+	} else if (error && error != ETIMEDOUT) {
 		errno = error;
 		err(1, "splice error");
 	}
@@ -732,6 +821,60 @@ unsplice_cb(int from, short event, void *arg)
 	close(from);
 	close(to);
 	free(evs);
+}
+
+void
+iperf3_unsplice_cb(int from, short event, void *arg)
+{
+	struct ev_splice *evs = arg;
+	int to = evs->sock;
+	struct timeval end;
+	off_t splicelen;
+	socklen_t len;
+	int error;
+
+	if (event & EV_TIMEOUT) {
+		int fd = -1;
+
+		has_timedout = 1;
+		if (setsockopt(from, SOL_SOCKET, SO_SPLICE, &fd, sizeof(fd))
+		    == -1)
+			err(1, "setsockopt SO_SPLICE unsplice iperf3");
+		/* fall through to print status line */
+	}
+
+	if (gettimeofday(&end, NULL) == -1)
+		err(1, "gettimeofday end iperf3");
+	len = sizeof(error);
+	if (getsockopt(from, SOL_SOCKET, SO_ERROR, &error, &len) == -1)
+		err(1, "getsockopt SO_ERROR iperf3");
+	if (error == ETIMEDOUT) {
+		struct timeval timeo;
+
+		/* last data was seen before idle time */
+		timeo.tv_sec = idle;
+		timeo.tv_usec = 0;
+		timersub(&end, &timeo, &end);
+	}
+	len = sizeof(splicelen);
+	if (getsockopt(from, SOL_SOCKET, SO_SPLICE, &splicelen, &len) == -1)
+		err(1, "getsockopt SO_SPLICE iperf3");
+	print_status("splice iperf3", splicelen, &evs->begin, &end);
+	if (error && error != ETIMEDOUT) {
+		errno = error;
+		err(1, "splice iperf3 error");
+	}
+
+	if (to < 0) {
+		close(from);
+		close(-to);
+		free(evs);
+	} else {
+		if (shutdown(to, SHUT_WR) == -1)
+			err(1, "shutdown iperf3");
+		evs->sock = -from;
+		timeout_event(&evs->ev, to, EV_READ, iperf3_unsplice_cb, evs);
+	}
 }
 
 void
@@ -818,6 +961,11 @@ process_copy(struct ev_splice *evs, int from, int to)
 			if (in == 0 && !udpmode)
 				break;
 			out = send(to, buf, in, 0);
+			if (out == -1 && iperf3 &&
+			    (errno == EPIPE || errno == ECONNRESET)) {
+				/* ignore error, iperf3 closes connection */
+				break;
+			}
 			if (out == -1)
 				err(1, "write");
 			if (out != in)
@@ -1096,7 +1244,7 @@ socket_bind_listen(int family, int socktype, int protocol,
 		return -1;
 	}
 	if (socktype == SOCK_STREAM) {
-		if (listen(sock, multi + 1) == -1)
+		if (listen(sock, multi + iperf3 + 1) == -1)
 			err(1, "listen");
 	}
 	return sock;
