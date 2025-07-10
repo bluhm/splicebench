@@ -66,7 +66,9 @@ Run until all splicings have finished.
 .It Fl t Ar timeout
 Waiting for connection and splicing are stopped after timeout.
 When splicing, all data has to be transfered within this timeout
-plus two seconds.
+plus a few seconds.
+The same timeout is used for initial accept and restarted after first
+accept.
 Disable timeout with 0 and run forever.
 Default is 10 seconds.
 .It Fl u

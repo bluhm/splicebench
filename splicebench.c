@@ -222,7 +222,7 @@ main(int argc, char *argv[])
 	if (timeout) {
 		if (gettimeofday(&finish, NULL) == -1)
 			err(1, "gettimeofday finish");
-		finish.tv_sec += timeout + 1;
+		finish.tv_sec += timeout + 3 + iperf3 + repeat;
 		if (udpmode)
 			finish.tv_sec += idle;
 	}
@@ -664,7 +664,7 @@ socket_connect_repeat(const char *name, struct ev_accept *eva)
 		/* after first accept, restart timeout */
 		if (gettimeofday(&finish, NULL) == -1)
 			err(1, "gettimeofday finish");
-		finish.tv_sec += timeout + 1;
+		finish.tv_sec += timeout + 3 + iperf3 + repeat;
 		if (udpmode)
 			finish.tv_sec += idle;
 	}
