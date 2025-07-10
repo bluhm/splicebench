@@ -1,5 +1,7 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
+1.07
+
 1.06 2025-07-10
   * Options -n and -N for multiple and repeated connections can be
     combined now.
