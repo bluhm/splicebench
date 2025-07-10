@@ -1,6 +1,14 @@
 Revision history for splicebench socket splice network benchmarking tool.
 
-1.06
+1.06 2025-07-10
+  * Options -n and -N for multiple and repeated connections can be
+    combined now.
+  * When using repeated connections, traffic is blocked until
+    the connection to the first address is accepted.
+  * Option -I allows to use iperf3 for TCP tests.  The additional
+    control connection is spliced bidirectionally.
+  * Timeout defaults to 10 seconds.  It is restarted when all
+    connections have been accepted.
 
 1.05 2024-08-11
   * If TCP splicing ends due to global timeout, exit with error
